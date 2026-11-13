@@ -30,6 +30,12 @@ async fn main() -> Result<()> {
             println!("warmed {} slots", g.cfg.slots);
             return Ok(());
         }
+        Some("derive") if std::env::var("CABAL_DEBUG").is_ok() => {
+            // Debug only: print a derived wallet's account id and key so a stuck transaction can be replayed by hand.
+            let label = std::env::args().nth(2).unwrap_or_default();
+            println!("{}", g.debug_wallet(&label));
+            return Ok(());
+        }
         _ => {}
     }
     g.recover().await;

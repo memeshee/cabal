@@ -31,14 +31,23 @@ use crate::{
 
 /// Mirrors the contract's `MAX_TEXT`.
 const MAX_CALL_TEXT: usize = 200;
+/// Prepaid gas per call, in Tgas. NEAR reserves `gas x gas price` up front and refunds what is unused, and on testnet
+/// the price has been high enough that 40 Tgas reserves ~0.04 NEAR. These calls burn only a few Tgas, so reserve little:
+/// a small wallet must still be able to afford the call it needs next (a side wallet that just bought has to be able to sell).
+const GAS_TX: u64 = 20;
+const GAS_CALL: u64 = 15;
 const TICKERS: [&str; 10] = ["FROG", "TOAD", "MOON", "NEKO", "GIGA", "SMOL", "WOJAK", "DEGEN", "PEPE2", "BONKER"];
 
 // Warm-up targets in milliNEAR; a wallet is topped up when it falls under 60% of its target.
-const T_KOL: u64 = 600;
-const T_CROWD: u64 = 400;
-const T_EXCHANGE: u64 = 400;
-const T_WHALE: u64 = 60;
-const T_FRIEND: u64 = 50;
+// A cabal KOL pays for three side wallets (3 x 0.11) and buys (up to 0.11); crowd wallets buy up to 0.21 per call and
+// two calls can land close together. Targets leave room for that plus gas, and `warm_slot` refills below the floor.
+const T_KOL: u64 = 700;
+const T_CROWD: u64 = 700;
+const T_EXCHANGE: u64 = 300;
+const T_WHALE: u64 = 200;
+const T_FRIEND: u64 = 200;
+/// A wallet is refilled whenever it holds less than this share of its target.
+const REFILL_BELOW_PCT: u128 = 85;
 
 pub struct Wallets {
     pub kols: Vec<AccountId>,
@@ -211,6 +220,19 @@ impl Game {
 
     fn w(&self, label: &str) -> AccountId {
         self.chain.wallet(&self.master, label).expect("wallet derivation")
+    }
+
+    /// Debug aid for `house derive <label>` (requires CABAL_DEBUG). Testnet throwaway keys only.
+    pub fn debug_wallet(&self, label: &str) -> String {
+        use sha2::Digest as _;
+        let id = self.w(label);
+        let mut h = Sha256::new();
+        h.update(b"cabal/wallet/v1|");
+        h.update(self.master);
+        h.update(b"|");
+        h.update(label.as_bytes());
+        let seed: [u8; 32] = h.finalize().into();
+        format!("{id} {}", self.chain.debug_secret(&seed))
     }
 
     fn slot_wallets(&self, slot: usize) -> Wallets {
@@ -457,7 +479,7 @@ impl Game {
         let house_bal = self.chain.balance(&self.chain.house).await;
         for (acct, target) in wanted {
             let bal = self.chain.balance(&acct).await;
-            if bal < mnear(target) * 6 / 10 {
+            if bal < mnear(target) * REFILL_BELOW_PCT / 100 {
                 let need = mnear(target) - bal;
                 if house_bal < need + mnear(2_000) {
                     tracing::warn!("house balance is low; skipping warm-up of {acct}");
@@ -722,18 +744,43 @@ impl Game {
         }
     }
 
+    /// Run one plan step, retrying transient failures. Each attempt re-reads chain state first, so a retry can never
+    /// repeat something that already happened (a fund is skipped if the contract recorded it; a sell re-reads chips).
     async fn exec(&self, t: &Arc<Table>, round: u32, act: Act) {
+        let mut attempt = 0;
+        loop {
+            match self.exec_once(t, round, act.clone()).await {
+                Ok(()) => return,
+                Err(e) if attempt < 3 && !matches!(act, Act::Call { .. } | Act::React { .. }) && !format!("{e:#}").contains("still pending") => {
+                    attempt += 1;
+                    tracing::warn!(round, ?act, attempt, "step failed, will retry: {e:#}");
+                    sleep(Duration::from_millis(2_000 * attempt as u64)).await;
+                }
+                Err(e) => {
+                    // Expected sometimes (a price that moved, a market that just closed); the table carries on.
+                    tracing::warn!(round, ?act, "step failed: {e:#}");
+                    return;
+                }
+            }
+        }
+    }
+
+    async fn exec_once(&self, t: &Arc<Table>, round: u32, act: Act) -> Result<()> {
         let w = &t.wallets;
-        let result: Result<()> = async {
+        {
             match act {
                 Act::Fund { from, to, mnear: m } => {
-                    let o = self.chain.call(&w.id(from), "fund", json!({ "round": round, "to": w.id(to) }), mnear(m), 40).await?;
+                    let already: Option<String> = self.chain.view("funded_by_of", json!({ "round": round, "account_id": w.id(to) })).await.unwrap_or(None);
+                    if already.is_some() {
+                        return Ok(());
+                    }
+                    let o = self.chain.call(&w.id(from), "fund", json!({ "round": round, "to": w.id(to) }), mnear(m), GAS_TX).await?;
                     if !o.ok {
                         return Err(anyhow!("fund refused: {:?}", o.error));
                     }
                 }
                 Act::Buy { who, mnear: m } => {
-                    let o = self.chain.call(&w.id(who), "buy", json!({ "round": round, "min_chips": 1 }), mnear(m), 40).await?;
+                    let o = self.chain.call(&w.id(who), "buy", json!({ "round": round, "min_chips": 1 }), mnear(m), GAS_TX).await?;
                     if !o.ok {
                         return Err(anyhow!("buy refused: {:?}", o.error));
                     }
@@ -743,7 +790,7 @@ impl Game {
                     let chips: u64 = self.chain.view("chips_of", json!({ "round": round, "account_id": me })).await?;
                     let n = chips * pct as u64 / 100;
                     if n > 0 {
-                        let o = self.chain.call(&me, "sell", json!({ "round": round, "chips": n, "min_proceeds": "0" }), 0, 40).await?;
+                        let o = self.chain.call(&me, "sell", json!({ "round": round, "chips": n, "min_proceeds": "0" }), 0, GAS_TX).await?;
                         if !o.ok {
                             return Err(anyhow!("sell refused: {:?}", o.error));
                         }
@@ -760,7 +807,7 @@ impl Game {
                     };
                     let text = if text.to_uppercase().contains(&format!("${}", t.ticker)) { text } else { format!("${} - {}", t.ticker, text) };
                     let text: String = text.chars().take(MAX_CALL_TEXT).collect();
-                    let o = self.chain.call(&w.kols[kol], "post_call", json!({ "round": round, "seat": kol, "text": text }), 0, 40).await?;
+                    let o = self.chain.call(&w.kols[kol], "post_call", json!({ "round": round, "seat": kol, "text": text }), 0, GAS_CALL).await?;
                     if !o.ok {
                         return Err(anyhow!("call refused: {:?}", o.error));
                     }
@@ -784,11 +831,6 @@ impl Game {
             }
             Ok(())
         }
-        .await;
-        if let Err(e) = result {
-            // Expected sometimes (a price that moved, a market that just closed); the table carries on.
-            tracing::warn!(round, ?act, "step failed: {e:#}");
-        }
     }
 
     // ───────────────────────── player actions ─────────────────────────
@@ -811,7 +853,7 @@ impl Game {
         if !(5..=300).contains(&m) {
             return ActionResult::fail("Pick between 0.005 and 0.3 NEAR.");
         }
-        match self.chain.call(who, "buy", json!({ "round": round, "min_chips": 1 }), mnear(m), 40).await {
+        match self.chain.call(who, "buy", json!({ "round": round, "min_chips": 1 }), mnear(m), GAS_TX).await {
             Ok(o) => {
                 let d = o.ret.clone().map(|c| json!({ "chips": c }));
                 Self::outcome(o, d)
@@ -839,7 +881,7 @@ impl Game {
         if n == 0 {
             return ActionResult::fail("You don't hold any chips on this table.");
         }
-        match self.chain.call(who, "sell", json!({ "round": round, "chips": n, "min_proceeds": "0" }), 0, 40).await {
+        match self.chain.call(who, "sell", json!({ "round": round, "chips": n, "min_proceeds": "0" }), 0, GAS_TX).await {
             Ok(o) => {
                 let d = o.ret.clone().map(|v| json!({ "chips": n, "proceeds": v }));
                 Self::outcome(o, d)
@@ -856,7 +898,7 @@ impl Game {
         if !(10..=100).contains(&m) {
             return ActionResult::fail("Stake between 0.01 and 0.1 NEAR.");
         }
-        match self.chain.call(who, "expose", json!({ "round": round, "seat": seat }), mnear(m), 40).await {
+        match self.chain.call(who, "expose", json!({ "round": round, "seat": seat }), mnear(m), GAS_TX).await {
             Ok(o) => Self::outcome(o, None),
             Err(e) => ActionResult::fail(format!("Could not reach the chain: {e}")),
         }

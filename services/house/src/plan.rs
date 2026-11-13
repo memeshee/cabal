@@ -15,6 +15,8 @@ pub const N_SIDES: usize = 3;
 pub const N_CROWD: usize = 8;
 pub const PLAY_SECS: u32 = 180;
 pub const REVEAL_SECS: u32 = 90;
+/// What the cabal pays into each side wallet: enough for its buy (up to 0.075), then a sell and a sweep, with gas reserved.
+pub const SIDE_FUND_MNEAR: u64 = 170;
 
 /// A wallet the house controls, by role. Concrete accounts are leased per table.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
@@ -98,7 +100,7 @@ impl Plan {
             if k == cabal {
                 for j in 0..N_SIDES {
                     let j64 = j as u64;
-                    push(t - 31_000 + j64 * 2_500, Act::Fund { from: Who::Kol(k), to: Who::Side(j), mnear: 110 });
+                    push(t - 31_000 + j64 * 2_500, Act::Fund { from: Who::Kol(k), to: Who::Side(j), mnear: SIDE_FUND_MNEAR });
                     push(t - 16_000 + j64 * 2_200 + rng.gen_range(0..800), Act::Buy { who: Who::Side(j), mnear: rng.gen_range(55..75) });
                     push(t + 6_500 + j64 * 3_000 + rng.gen_range(0..800), Act::Sell { who: Who::Side(j), pct: 100 });
                 }
@@ -303,6 +305,19 @@ mod tests {
     }
 
     #[test]
+    fn side_wallets_can_afford_their_sell_after_their_buy() {
+        // Regression: wallets were funded with 0.11, spent ~0.065 on the buy, and could then not reserve gas for the sell.
+        // NEAR reserves gas x price up front. Assume a pessimistic 1.5e9 yocto/gas and the gas the house attaches.
+        let reserve_for_sell = 20u128 * 1_000_000_000_000 * 1_500_000_000;
+        for seed in 0..200 {
+            let p = plan(seed);
+            let buy = p.steps.iter().filter_map(|s| match &s.act { Act::Buy { who: Who::Side(_), mnear } => Some(*mnear), _ => None }).max().unwrap();
+            let left = (SIDE_FUND_MNEAR - buy) as u128 * 1_000_000_000_000_000_000_000;
+            assert!(left > reserve_for_sell * 2, "seed {seed}: {left} left after the buy, sell reserves {reserve_for_sell}");
+        }
+    }
+
+    #[test]
     fn commitment_matches_the_contracts_preimage() {
         let sides = vec!["aa".repeat(32), "bb".repeat(32)];
         let ours = preimage(2, &sides, "pepper");
@@ -326,6 +341,15 @@ mod tests {
             if slot == 1 && p.cabal == 1 && p.friend_of == 3 {
                 eprintln!("CAND seed={seed} cabal={} order={:?} friend_of={}", p.cabal, p.call_order, p.friend_of);
             }
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn print_demo_plan() {
+        let p = plan(DEMO_SEED);
+        for s in &p.steps {
+            eprintln!("PLAN {:>6}ms {:?}", s.at_ms, s.act);
         }
     }
 

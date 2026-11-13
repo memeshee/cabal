@@ -86,6 +86,11 @@ impl Chain {
         Ok(id)
     }
 
+    pub fn debug_secret(&self, seed: &[u8; 32]) -> String {
+        use near_api::types::crypto::secret_key::ED25519SecretKey;
+        SecretKey::ED25519(ED25519SecretKey::from_secret_key(*seed)).to_string()
+    }
+
     pub fn can_sign(&self, who: &AccountId) -> bool {
         self.signers.read().unwrap().contains_key(who)
     }
@@ -165,6 +170,21 @@ impl Chain {
         let key = self.signer(signer)?;
         let lock = self.lock_for(signer);
         let _g = lock.lock().await;
+        // A wallet that cannot cover the deposit plus gas is rejected the same way as a stale nonce, but retrying never
+        // helps. Check first so the failure is reported as what it is.
+        // Gas is reserved at (gas x price) before execution; assume a pessimistic 1.5e9 yocto per gas unit.
+        let need = deposit_yocto + gas_tgas as u128 * 1_000_000_000_000 * 1_500_000_000;
+        let have = self.balance(signer).await;
+        if have != 0 && have < need {
+            return Ok(TxOutcome {
+                ok: false,
+                hash: String::new(),
+                explorer_url: String::new(),
+                error: Some(format!("wallet {signer} holds {have} yocto, needs about {need}")),
+                ret: None,
+                gas_tgas: 0.0,
+            });
+        }
         // An `InvalidTransaction` rejection happens before inclusion (stale nonce or block hash on a lagging RPC node),
         // so the transaction never executed and sending a freshly signed one is safe. Nothing else is retried.
         let mut attempt = 0;
@@ -182,7 +202,8 @@ impl Chain {
                 Ok(v) => break v,
                 Err(e) if attempt < 3 && format!("{e:?}").contains("InvalidTransaction") => {
                     attempt += 1;
-                    tracing::warn!(%signer, method, attempt, "transaction rejected before inclusion; retrying with a fresh signature");
+                    let detail: String = format!("{e:?}").chars().take(700).collect();
+                    tracing::warn!(%signer, method, attempt, %detail, "transaction rejected before inclusion; retrying with a fresh signature");
                     tokio::time::sleep(std::time::Duration::from_millis(1200 * attempt)).await;
                 }
                 Err(e) => return Err(anyhow!("send {method}: {e}")),
@@ -191,6 +212,7 @@ impl Chain {
         let res = res.into_full().ok_or_else(|| anyhow!("transaction still pending"))?;
         let hash = res.outcomes().first().map(|o| o.transaction_hash.to_string()).unwrap_or_default();
         let gas = res.total_gas_burnt.as_gas() as f64 / 1e12;
+        tracing::debug!(method, burned_tgas = gas, attached_tgas = gas_tgas, "call burned");
         let explorer_url = format!("{}/txns/{}", self.explorer, hash);
         match res.into_result() {
             Ok(s) => Ok(TxOutcome { ok: true, hash, explorer_url, error: None, ret: s.json::<Value>().ok(), gas_tgas: gas }),
