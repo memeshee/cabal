@@ -725,6 +725,22 @@ mod tests {
     }
 
     #[test]
+    #[ignore]
+    fn print_pinned_plans() {
+        for tier in Tier::ALL {
+            let p = plan(demo_seed(tier), tier);
+            eprintln!("TIER {tier:?} calls {:?}", p.call_ms);
+            for s in &p.steps {
+                if matches!(&s.act, Act::Call { .. } | Act::Fund { to: Who::Side(_) | Who::Relay | Who::Friend | Who::Decoy, .. } | Act::Buy { who: Who::Side(_) | Who::Friend | Who::Decoy, .. } | Act::Sell { who: Who::Side(_), .. })
+                    || matches!(&s.act, Act::Buy { who: Who::Kol(_), .. }) && s.at_ms < 90_000 && p.conviction.is_some() && s.at_ms % 1 == 0
+                {
+                    eprintln!("PLAN {:>6}ms {:?}", s.at_ms, s.act);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn the_pinned_demo_tables_are_what_the_walkthrough_says() {
         // The README walks a judge through the demo table: @mira is the cabal on every tier, @dex calls first, and the
         // honest friend wallet belongs to @oren. If this fails, update the walkthrough before updating this test.
