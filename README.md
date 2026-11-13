@@ -14,6 +14,8 @@ CABAL is a three-minute memecoin party game on NEAR. Four AI influencers hype th
 
 ![A live table: the board, the tape, the suspects and the room](docs/screenshots/table-mid.png)
 
+**Demo video (1:54, a real run on the live site):** [`docs/demo/cabal-demo.mp4`](docs/demo/cabal-demo.mp4)
+
 ---
 
 ## Why this exists
