@@ -1,0 +1,49 @@
+[Script Info]
+ScriptType: v4.00+
+PlayResX: 1440
+PlayResY: 900
+WrapStyle: 0
+
+[V4+ Styles]
+Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding
+Style: Sub,DejaVu Sans,38,&H00FFFFFF,&H00FFFFFF,&H8C0A0805,&H8C0A0805,1,0,0,0,100,100,0,0,3,9,0,2,140,140,30,1
+
+[Events]
+Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text
+Dialogue: 0,0:00:00.35,0:00:04.26,Sub,,0,0,0,,Every day, someone online tells you which coin is about to explode.
+Dialogue: 0,0:00:04.56,0:00:08.03,Sub,,0,0,0,,Sometimes they're right. Sometimes they bought it an hour ago, and you're
+Dialogue: 0,0:00:08.03,0:00:08.98,Sub,,0,0,0,,who they sell it to.
+Dialogue: 0,0:00:09.78,0:00:12.13,Sub,,0,0,0,,CABAL is a game where you catch that person.
+Dialogue: 0,0:00:12.43,0:00:16.93,Sub,,0,0,0,,Four callers share tips at one table. Three are honest. One is secretly
+Dialogue: 0,0:00:16.93,0:00:17.88,Sub,,0,0,0,,running a scam.
+Dialogue: 0,0:00:18.68,0:00:22.94,Sub,,0,0,0,,The scammer pays a few fresh wallets to buy early, tells you to buy, then
+Dialogue: 0,0:00:22.94,0:00:24.22,Sub,,0,0,0,,sells into your money.
+Dialogue: 0,0:00:24.52,0:00:28.72,Sub,,0,0,0,,Everything happens on a real blockchain, with play money. Before the round
+Dialogue: 0,0:00:28.72,0:00:31.89,Sub,,0,0,0,,starts, the house locks the answer in a sealed envelope.
+Dialogue: 0,0:00:32.69,0:00:37.23,Sub,,0,0,0,,Here's the table. Each lane is a caller, and each row is a wallet. You get
+Dialogue: 0,0:00:37.23,0:00:37.97,Sub,,0,0,0,,two minutes.
+Dialogue: 0,0:00:38.27,0:00:41.29,Sub,,0,0,0,,First, I'll ask @mira if she has any other wallets.
+Dialogue: 0,0:00:42.09,0:00:45.05,Sub,,0,0,0,,No other wallets, she says. Sure, @mira.
+Dialogue: 0,0:00:45.85,0:00:50.33,Sub,,0,0,0,,Now watch the red strings. Somebody is paying for three brand new wallets.
+Dialogue: 0,0:00:50.63,0:00:55.03,Sub,,0,0,0,,A fresh wallet has no history, which is why scammers love them. Think burner
+Dialogue: 0,0:00:55.03,0:00:56.30,Sub,,0,0,0,,phones, but for money.
+Dialogue: 0,0:00:57.10,0:01:01.51,Sub,,0,0,0,,Those wallets all buy. @dex makes a call too, but his is honest. Meanwhile,
+Dialogue: 0,0:01:01.51,0:01:03.46,Sub,,0,0,0,,the new wallets are out shopping.
+Dialogue: 0,0:01:04.26,0:01:08.43,Sub,,0,0,0,,Then @mira tells everyone to buy. Her wallets already did. And now they
+Dialogue: 0,0:01:08.43,0:01:10.02,Sub,,0,0,0,,sell, right into the crowd.
+Dialogue: 0,0:01:10.32,0:01:13.80,Sub,,0,0,0,,So the people who trusted her are the ones left holding the bag.
+Dialogue: 0,0:01:14.60,0:01:18.82,Sub,,0,0,0,,Remember her answer? I click her claim, and the board lights up the three
+Dialogue: 0,0:01:18.82,0:01:20.55,Sub,,0,0,0,,wallets she said didn't exist.
+Dialogue: 0,0:01:21.35,0:01:26.44,Sub,,0,0,0,,I open one. Paid for by @mira. Bought before her call, sold after it. That's
+Dialogue: 0,0:01:26.44,0:01:27.11,Sub,,0,0,0,,a receipt.
+Dialogue: 0,0:01:27.91,0:01:30.41,Sub,,0,0,0,,Good enough for me. I put my stake on @mira.
+Dialogue: 0,0:01:30.71,0:01:34.09,Sub,,0,0,0,,If I'm right, I get my stake back plus a share of the pot.
+Dialogue: 0,0:01:34.89,0:01:37.75,Sub,,0,0,0,,Then the clock runs out. A good time to stretch.
+Dialogue: 0,0:01:38.55,0:01:41.19,Sub,,0,0,0,,Exposed. And the blockchain backs it up.
+Dialogue: 0,0:01:41.49,0:01:45.47,Sub,,0,0,0,,The house sealed its answer before the round began, and your browser just
+Dialogue: 0,0:01:45.47,0:01:48.42,Sub,,0,0,0,,checked that it still matches. It had no way to cheat.
+Dialogue: 0,0:01:49.22,0:01:54.21,Sub,,0,0,0,,Her claim now reads false. And an autopsy explains, in plain words, exactly
+Dialogue: 0,0:01:54.21,0:01:55.68,Sub,,0,0,0,,how she pulled it off.
+Dialogue: 0,0:01:56.48,0:02:01.25,Sub,,0,0,0,,Two minutes, no wallet, no real money. There are two harder levels where the
+Dialogue: 0,0:02:01.25,0:02:02.69,Sub,,0,0,0,,cabal hides its tracks.
+Dialogue: 0,0:02:02.99,0:02:06.95,Sub,,0,0,0,,Go catch a scammer. And please don't buy anything @mira recommends.

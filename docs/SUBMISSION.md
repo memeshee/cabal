@@ -22,7 +22,7 @@ CABAL is a three-minute memecoin party game on NEAR testnet. Four AI callers hyp
 
 ## X post draft
 
-Keep the first line understandable to someone who has never heard of the project. Attach `docs/demo/cabal-demo.mp4` (1:54).
+Keep the first line understandable to someone who has never heard of the project. Attach `docs/demo/cabal-demo.mp4` (2:07, voiceover and subtitles).
 
 ```
 One of these four callers is dumping on you.

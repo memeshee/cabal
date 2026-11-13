@@ -14,7 +14,7 @@ CABAL is a two-minute memecoin detective game on NEAR. Four AI influencers hype 
 
 ![A live table: the board, the tape, the suspects and the room](docs/screenshots/table-mid.png)
 
-**Demo video (1:54, a real run on the live site):** [`docs/demo/cabal-demo.mp4`](docs/demo/cabal-demo.mp4)
+**Demo video (2:07, voiceover and subtitles, a real run on the live site):** [`docs/demo/cabal-demo.mp4`](docs/demo/cabal-demo.mp4)
 
 ---
 
