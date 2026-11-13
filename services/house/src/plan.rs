@@ -148,6 +148,10 @@ pub fn seed_from_label(label: &str) -> u64 {
 mod tests {
     use super::*;
 
+    const DEMO_SEED: u64 = 20261169;
+    const DEMO_CABAL_SEAT: usize = 1; // @mira
+    const DEMO_CALL_ORDER: [usize; 4] = [2, 1, 0, 3]; // @dex, @mira, @kaito, @oren
+
     fn plan(seed: u64) -> Plan {
         Plan::generate(seed, "salt".into())
     }
@@ -310,6 +314,30 @@ mod tests {
         assert_eq!(ours, theirs);
         assert_eq!(commitment(2, &sides, "pepper").len(), 64);
         assert_ne!(commitment(1, &sides, "pepper"), commitment(2, &sides, "pepper"));
+    }
+
+    #[test]
+    #[ignore]
+    fn find_demo_seed() {
+        // Run with --ignored --nocapture to list candidate demo seeds.
+        for seed in 20261114u64..20261114 + 4000 {
+            let p = plan(seed);
+            let slot = p.call_order.iter().position(|k| *k == p.cabal).unwrap();
+            if slot == 1 && p.cabal == 1 && p.friend_of == 3 {
+                eprintln!("CAND seed={seed} cabal={} order={:?} friend_of={}", p.cabal, p.call_order, p.friend_of);
+            }
+        }
+    }
+
+    #[test]
+    fn the_documented_demo_table_is_pinned() {
+        // The README walks a judge through the demo table. If this fails, the walkthrough no longer matches the game:
+        // update the README before updating this test.
+        let p = plan(DEMO_SEED);
+        assert_eq!(p.friend_of, 3, "the honest friend wallet belongs to @oren");
+        eprintln!("demo seed: cabal seat {}, call order {:?}, cabal calls at {}ms", p.cabal, p.call_order, p.cabal_call_ms());
+        assert_eq!(p.cabal, DEMO_CABAL_SEAT);
+        assert_eq!(p.call_order, DEMO_CALL_ORDER.to_vec());
     }
 
     #[test]

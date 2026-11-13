@@ -57,7 +57,7 @@ pub async fn run(g: Arc<Game>) -> Result<()> {
     let mut accused_at = 0u64;
     while started.elapsed() < Duration::from_secs(230) {
         sleep(Duration::from_secs(2)).await;
-        let v = g.table_view(&t, 0, 0);
+        let v = g.table_view_full(&t, 0, 0);
         if v.phase != Phase::Playing {
             break;
         }

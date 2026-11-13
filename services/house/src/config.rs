@@ -88,7 +88,7 @@ impl Config {
             near_ai_key: var("NEAR_AI_API_KEY"),
             near_ai_model: var("NEAR_AI_MODEL").unwrap_or_else(|| "Qwen/Qwen3-30B-A3B-Instruct-2507".into()),
             fallback_llm,
-            demo_seed: var("DEMO_SEED").and_then(|p| p.parse().ok()).unwrap_or(20261114),
+            demo_seed: var("DEMO_SEED").and_then(|p| p.parse().ok()).unwrap_or(20261169),
         })
     }
 }

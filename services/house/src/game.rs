@@ -76,6 +76,7 @@ struct TState {
     last_ask: HashMap<String, Instant>,
     opened_at: Option<Instant>,
     reveal_hash: Option<String>,
+    ended: Option<Instant>,
 }
 
 pub struct Table {
@@ -384,11 +385,13 @@ impl Game {
                 last_ask: HashMap::new(),
                 opened_at: None,
                 reveal_hash: None,
+                ended: None,
             }),
         }
     }
 
     fn release(self: &Arc<Self>, t: &Arc<Table>) {
+        t.st.lock().unwrap().ended = Some(Instant::now());
         self.slot_busy.lock().unwrap()[t.slot] = false;
         self.unsave(&t.key);
         let g = self.clone();
@@ -471,6 +474,8 @@ impl Game {
     pub async fn janitor(self: Arc<Self>) {
         loop {
             sleep(Duration::from_secs(90)).await;
+            // Finished tables stay readable for a while (they live on the chain anyway), then leave memory.
+            self.tables.lock().unwrap().retain(|_, t| t.st.lock().unwrap().ended.map(|e| e.elapsed() < Duration::from_secs(20 * 60)).unwrap_or(true));
             let c = &self.chain.contract;
             if self.chain.balance(c).await < mnear(7_000) {
                 let _ = self.chain.transfer(&self.chain.house, c, mnear(3_000)).await;
@@ -909,7 +914,7 @@ impl Game {
     }
 
     /// Build the public view from chain data. Used for live tables (with chat) and for any past round (without).
-    pub fn view_from(&self, key: &str, phase: Phase, ticker: &str, demo: bool, note: String, error: Option<String>, rv: Option<RoundV>, feed: &[EntryV], chat: &[ChatLine], since_feed: usize, since_chat: usize, elapsed_ms: Option<u64>, reveal_hash: Option<String>) -> TableView {
+    pub fn view_from(&self, spoil: bool, key: &str, phase: Phase, ticker: &str, demo: bool, note: String, error: Option<String>, rv: Option<RoundV>, feed: &[EntryV], chat: &[ChatLine], since_feed: usize, since_chat: usize, elapsed_ms: Option<u64>, reveal_hash: Option<String>) -> TableView {
         let seats_v: Vec<SeatV> = rv.as_ref().map(|r| r.seats.clone()).unwrap_or_default();
         let seats: Vec<SeatPublic> = seats_v
             .iter()
@@ -917,8 +922,18 @@ impl Game {
             .map(|(i, s)| SeatPublic { handle: s.handle.clone(), wallet: s.wallet.clone(), tagline: PERSONAS[i.min(3)].tagline, color: PERSONAS[i.min(3)].color })
             .collect();
         let labels = rv.as_ref().map(|r| Self::labels(&seats_v, r)).unwrap_or_default();
-        let dos = dossiers(feed, &seats_v);
-        let verdict = if seats_v.is_empty() { None } else { solve(feed, &seats_v) };
+        // While a table is live the API serves raw facts only. The derived timing fields and the solver's verdict would
+        // hand the answer to anyone reading the JSON, so they appear after the reveal (or to the self-test).
+        let open = !phase.is_final() && !spoil;
+        let mut dos = dossiers(feed, &seats_v);
+        if open {
+            for d in dos.iter_mut() {
+                d.lead_ms = None;
+                d.dumped_after_ms = None;
+                d.funder_call_ms = None;
+            }
+        }
+        let verdict = if seats_v.is_empty() || open { None } else { solve(feed, &seats_v) };
         let reveal = rv.as_ref().and_then(|r| {
             let (cs, salt) = (r.cabal_seat?, r.salt.clone()?);
             let pre = plan::preimage(cs as usize, &r.sides, &salt);
@@ -962,8 +977,17 @@ impl Game {
     }
 
     pub fn table_view(&self, t: &Table, since_feed: usize, since_chat: usize) -> TableView {
+        self.table_view_inner(t, since_feed, since_chat, false)
+    }
+
+    /// Includes the solver's verdict while the table is live. For the self-test only; never routed to the API.
+    pub fn table_view_full(&self, t: &Table, since_feed: usize, since_chat: usize) -> TableView {
+        self.table_view_inner(t, since_feed, since_chat, true)
+    }
+
+    fn table_view_inner(&self, t: &Table, since_feed: usize, since_chat: usize, spoil: bool) -> TableView {
         let s = t.st.lock().unwrap();
-        let mut v = self.view_from(&t.key, s.phase, &t.ticker, t.demo, s.note.clone(), s.error.clone(), s.rv.clone(), &s.feed, &s.chat, since_feed, since_chat, s.opened_at.map(|o| o.elapsed().as_millis() as u64), s.reveal_hash.clone());
+        let mut v = self.view_from(spoil, &t.key, s.phase, &t.ticker, t.demo, s.note.clone(), s.error.clone(), s.rv.clone(), &s.feed, &s.chat, since_feed, since_chat, s.opened_at.map(|o| o.elapsed().as_millis() as u64), s.reveal_hash.clone());
         // The runner knows the round id as soon as the table opens, before the first chain poll lands.
         v.round = s.round.or(v.round);
         v
@@ -990,6 +1014,6 @@ impl Game {
         };
         let ticker = rv.ticker.clone();
         // A past table's feed may have been pruned from the front; indexes are then not contiguous from zero.
-        Ok(self.view_from(&format!("r{id}"), phase, &ticker, false, String::new(), None, Some(rv), &feed, &[], 0, 0, None, None))
+        Ok(self.view_from(false, &format!("r{id}"), phase, &ticker, false, String::new(), None, Some(rv), &feed, &[], 0, 0, None, None))
     }
 }

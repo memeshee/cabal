@@ -1,0 +1,14 @@
+{
+  "name": "cabal",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "packageManager": "pnpm@11.1.1",
+  "scripts": {
+    "contract:test": "cargo test -p cabal",
+    "house:test": "cargo test -p house",
+    "web:dev": "pnpm --filter @cabal/web dev",
+    "web:test": "pnpm --filter @cabal/web test",
+    "web:build": "pnpm --filter @cabal/web build"
+  }
+}
