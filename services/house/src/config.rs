@@ -19,6 +19,8 @@ pub struct Config {
     /// Test-NEAR the house gives a new guest account.
     pub guest_grant_mnear: u64,
     pub max_tables_per_ip_hour: usize,
+    pub max_guests_per_ip_hour: usize,
+    pub max_guests_per_day: usize,
     pub max_tables_per_day: usize,
     pub llm_daily_cap: u32,
     pub near_ai_key: Option<String>,
@@ -79,6 +81,8 @@ impl Config {
             slots: var("SLOTS").and_then(|p| p.parse().ok()).unwrap_or(3),
             guest_grant_mnear: var("GUEST_GRANT_MNEAR").and_then(|p| p.parse().ok()).unwrap_or(350),
             max_tables_per_ip_hour: var("MAX_TABLES_PER_IP_HOUR").and_then(|p| p.parse().ok()).unwrap_or(8),
+            max_guests_per_ip_hour: var("MAX_GUESTS_PER_IP_HOUR").and_then(|p| p.parse().ok()).unwrap_or(4),
+            max_guests_per_day: var("MAX_GUESTS_PER_DAY").and_then(|p| p.parse().ok()).unwrap_or(250),
             max_tables_per_day: var("MAX_TABLES_PER_DAY").and_then(|p| p.parse().ok()).unwrap_or(150),
             llm_daily_cap: var("LLM_DAILY_CAP").and_then(|p| p.parse().ok()).unwrap_or(4000),
             near_ai_key: var("NEAR_AI_API_KEY"),

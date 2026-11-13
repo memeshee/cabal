@@ -291,7 +291,7 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(9);
         for seat in 0..4 {
             for _ in 0..30 {
-                assert!(scripted(seat, Intent::Call, "TOADIES", &mut rng).len() <= cabal::MAX_TEXT);
+                assert!(scripted(seat, Intent::Call, "TOADIES", &mut rng).len() <= 200);
             }
         }
     }

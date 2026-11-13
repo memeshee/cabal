@@ -17,7 +17,7 @@ pub const PLAY_SECS: u32 = 180;
 pub const REVEAL_SECS: u32 = 90;
 
 /// A wallet the house controls, by role. Concrete accounts are leased per table.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize)]
 pub enum Who {
     Kol(usize),
     Side(usize),

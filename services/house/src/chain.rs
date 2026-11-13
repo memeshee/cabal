@@ -128,14 +128,24 @@ impl Chain {
         let key = self.signer(from)?;
         let lock = self.lock_for(from);
         let _g = lock.lock().await;
-        let res = near_api::Tokens::account(from.clone())
-            .send_to(to.clone())
-            .near(NearToken::from_yoctonear(yocto))
-            .with_signer(key)
-            .wait_until(near_api::types::TxExecutionStatus::ExecutedOptimistic)
-            .send_to(&self.network)
-            .await
-            .map_err(|e| anyhow!("transfer: {e}"))?;
+        let mut attempt = 0;
+        let res = loop {
+            let r = near_api::Tokens::account(from.clone())
+                .send_to(to.clone())
+                .near(NearToken::from_yoctonear(yocto))
+                .with_signer(key.clone())
+                .wait_until(near_api::types::TxExecutionStatus::ExecutedOptimistic)
+                .send_to(&self.network)
+                .await;
+            match r {
+                Ok(v) => break v,
+                Err(e) if attempt < 3 && format!("{e:?}").contains("InvalidTransaction") => {
+                    attempt += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(1200 * attempt)).await;
+                }
+                Err(e) => return Err(anyhow!("transfer: {e}")),
+            }
+        };
         let full = res.into_full().ok_or_else(|| anyhow!("transfer still pending"))?;
         let hash = full.outcomes().first().map(|o| o.transaction_hash.to_string()).unwrap_or_default();
         full.into_result().map_err(|e| anyhow!("transfer failed: {}", clean_error(&format!("{e:?}"))))?;
@@ -155,16 +165,29 @@ impl Chain {
         let key = self.signer(signer)?;
         let lock = self.lock_for(signer);
         let _g = lock.lock().await;
-        let res = Contract(self.contract.clone())
-            .call_function(method, args)
-            .transaction()
-            .deposit(NearToken::from_yoctonear(deposit_yocto))
-            .gas(NearGas::from_tgas(gas_tgas))
-            .with_signer(signer.clone(), key)
-            .wait_until(near_api::types::TxExecutionStatus::ExecutedOptimistic)
-            .send_to(&self.network)
-            .await
-            .map_err(|e| anyhow!("send {method}: {e}"))?;
+        // An `InvalidTransaction` rejection happens before inclusion (stale nonce or block hash on a lagging RPC node),
+        // so the transaction never executed and sending a freshly signed one is safe. Nothing else is retried.
+        let mut attempt = 0;
+        let res = loop {
+            let r = Contract(self.contract.clone())
+                .call_function(method, args.clone())
+                .transaction()
+                .deposit(NearToken::from_yoctonear(deposit_yocto))
+                .gas(NearGas::from_tgas(gas_tgas))
+                .with_signer(signer.clone(), key.clone())
+                .wait_until(near_api::types::TxExecutionStatus::ExecutedOptimistic)
+                .send_to(&self.network)
+                .await;
+            match r {
+                Ok(v) => break v,
+                Err(e) if attempt < 3 && format!("{e:?}").contains("InvalidTransaction") => {
+                    attempt += 1;
+                    tracing::warn!(%signer, method, attempt, "transaction rejected before inclusion; retrying with a fresh signature");
+                    tokio::time::sleep(std::time::Duration::from_millis(1200 * attempt)).await;
+                }
+                Err(e) => return Err(anyhow!("send {method}: {e}")),
+            }
+        };
         let res = res.into_full().ok_or_else(|| anyhow!("transaction still pending"))?;
         let hash = res.outcomes().first().map(|o| o.transaction_hash.to_string()).unwrap_or_default();
         let gas = res.total_gas_burnt.as_gas() as f64 / 1e12;
