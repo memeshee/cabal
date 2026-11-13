@@ -236,7 +236,7 @@ fn caught_cabal_pays_correct_accusers_and_burns_the_bag() {
     let bag = c.buy(1, 1);
     ctx("alice.testnet", NEAR / 10, 7_000);
     c.expose(1, 0);
-    ctx("bob.testnet", NEAR / 5, 7_100);
+    ctx("bob.testnet", NEAR / 20, 7_100);
     c.expose(1, 0);
     ctx("carol.testnet", NEAR / 10, 7_200);
     c.expose(1, 2);
@@ -304,11 +304,15 @@ fn nobody_can_void_early() {
 }
 
 #[test]
-#[should_panic(expected = "previous round is still open")]
-fn one_open_table_at_a_time() {
+fn tables_run_side_by_side_with_separate_state() {
     let mut c = opened();
     ctx("house.cabal.testnet", NEAR, 5_000);
-    c.open_round("TOAD".into(), commit(1, &sides(), "x"), seats(), funders(), 60, 60);
+    let id = c.open_round("TOAD".into(), commit(1, &sides(), "x"), seats(), funders(), 60, 60);
+    assert_eq!(id, 2);
+    ctx("alice.testnet", NEAR / 5, 6_000);
+    let got = c.buy(2, 1);
+    assert_eq!(c.get_round(1).unwrap().supply, 0, "table 1 is untouched by trades on table 2");
+    assert_eq!(c.get_round(2).unwrap().supply, got);
 }
 
 #[test]

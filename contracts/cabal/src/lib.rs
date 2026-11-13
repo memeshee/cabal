@@ -21,9 +21,9 @@ use near_sdk::{env, near, require, AccountId, NearToken, PanicOnDefault, Promise
 pub const K: u128 = 1_000_000_000_000_000_000;
 pub const MAX_SUPPLY: u64 = 5_000_000;
 pub const MIN_TRADE: u128 = 1_000_000_000_000_000_000_000; // 0.001 NEAR
-pub const MIN_BOND: u128 = 500_000_000_000_000_000_000_000; // 0.5 NEAR
-pub const MIN_STAKE: u128 = 20_000_000_000_000_000_000_000; // 0.02 NEAR
-pub const MAX_STAKE: u128 = 500_000_000_000_000_000_000_000; // 0.5 NEAR
+pub const MIN_BOND: u128 = 100_000_000_000_000_000_000_000; // 0.1 NEAR
+pub const MIN_STAKE: u128 = 10_000_000_000_000_000_000_000; // 0.01 NEAR
+pub const MAX_STAKE: u128 = 100_000_000_000_000_000_000_000; // 0.1 NEAR
 /// Stakes are weighed in units of 1e15 yocto so the proportional split cannot overflow u128.
 pub const UNIT: u128 = 1_000_000_000_000_000;
 pub const MAX_FEED: u32 = 400;
@@ -224,10 +224,6 @@ impl Cabal {
         reveal_secs: u32,
     ) -> u32 {
         require!(env::predecessor_account_id() == self.house, "house only");
-        if self.latest > 0 {
-            let prev = self.rounds.get(&self.latest).expect("missing round");
-            require!(prev.status != Status::Open, "previous round is still open");
-        }
         let bond = env::attached_deposit().as_yoctonear();
         require!(bond >= MIN_BOND, "bond too small");
         require!(seats.len() >= 2 && seats.len() <= MAX_SEATS, "2 to 6 seats");
@@ -472,7 +468,7 @@ impl Cabal {
         require!(r.status == Status::Open && env::block_timestamp_ms() < r.closes_ms, "accusations are closed");
         require!((seat as usize) < r.seats.len(), "no such seat");
         let stake = env::attached_deposit().as_yoctonear();
-        require!((MIN_STAKE..=MAX_STAKE).contains(&stake), "stake must be between 0.02 and 0.5 NEAR");
+        require!((MIN_STAKE..=MAX_STAKE).contains(&stake), "stake must be between 0.01 and 0.1 NEAR");
         require!(r.accusers.len() < MAX_ACCUSERS, "too many accusations on this table");
         require!(!r.accusers.iter().any(|a| a.who == who), "you already accused someone this round");
         require!(
