@@ -27,6 +27,7 @@ fn seats() -> Vec<Seat> {
 fn funders() -> Vec<AccountId> {
     let mut f: Vec<AccountId> = seats().into_iter().map(|s| s.wallet).collect();
     f.push(acc("exchange.cabal.testnet"));
+    f.push(acc("relay.cabal.testnet"));
     f
 }
 
@@ -348,4 +349,117 @@ fn preimage_is_stable() {
         preimage(2, &[acc("a.testnet"), acc("b.testnet")], "s"),
         "cabal=2;sides=a.testnet,b.testnet;salt=s"
     );
+}
+
+
+// ───────────────────────── v2: funding trails, records ─────────────────────────
+
+#[test]
+fn a_relay_hop_still_traces_to_the_cabal() {
+    let mut c = opened();
+    ctx("kaito.cabal.testnet", NEAR / 2, 3_000);
+    c.fund(1, acc("relay.cabal.testnet"));
+    for s in sides() {
+        ctx("relay.cabal.testnet", NEAR / 10, 6_000);
+        c.fund(1, s);
+    }
+    ctx("house.cabal.testnet", 0, 65_000);
+    c.reveal(1, 0, sides(), "pepper".into());
+    assert_eq!(c.get_round(1).unwrap().status, Status::Revealed);
+}
+
+#[test]
+fn laundering_through_the_exchange_traces_to_the_cabal_that_paid_it_first() {
+    let mut c = opened();
+    ctx("kaito.cabal.testnet", NEAR / 2, 2_000);
+    c.fund(1, acc("exchange.cabal.testnet"));
+    // everyone tops up the exchange afterwards; only the first funder is recorded
+    for h in ["mira", "dex", "oren"] {
+        ctx(&format!("{h}.cabal.testnet"), NEAR / 20, 3_000);
+        c.fund(1, acc("exchange.cabal.testnet"));
+    }
+    for s in sides() {
+        ctx("exchange.cabal.testnet", NEAR / 10, 6_000);
+        c.fund(1, s);
+    }
+    ctx("house.cabal.testnet", 0, 65_000);
+    c.reveal(1, 0, sides(), "pepper".into());
+    assert_eq!(c.get_round(1).unwrap().status, Status::Revealed);
+}
+
+#[test]
+#[should_panic(expected = "was never funded by the cabal wallet")]
+fn a_trail_that_ends_at_someone_else_is_rejected() {
+    let mut c = opened();
+    // the exchange was first paid by an honest KOL, so the cabal cannot claim its wallets
+    ctx("mira.cabal.testnet", NEAR / 2, 2_000);
+    c.fund(1, acc("exchange.cabal.testnet"));
+    ctx("kaito.cabal.testnet", NEAR / 20, 3_000);
+    c.fund(1, acc("exchange.cabal.testnet"));
+    for s in sides() {
+        ctx("exchange.cabal.testnet", NEAR / 10, 6_000);
+        c.fund(1, s);
+    }
+    ctx("house.cabal.testnet", 0, 65_000);
+    c.reveal(1, 0, sides(), "pepper".into());
+}
+
+#[test]
+fn trails_up_to_three_hops_count_and_a_fourth_does_not() {
+    // kaito -> relay -> exchange -> w3: w3 is three hops from the cabal (counts).
+    // w3 is not a registered funder, so a wallet four hops away is built with the exchange as an extra link:
+    // kaito -> relay -> exchange -> mira(w) -> dex(w), where mira and dex are funders in the table.
+    let mut c = opened();
+    ctx("kaito.cabal.testnet", NEAR / 2, 2_000);
+    c.fund(1, acc("relay.cabal.testnet"));
+    ctx("relay.cabal.testnet", NEAR / 5, 3_000);
+    c.fund(1, acc("exchange.cabal.testnet"));
+    ctx("exchange.cabal.testnet", NEAR / 5, 4_000);
+    c.fund(1, acc("w3.cabal.testnet"));
+    assert!(c.traces_to(1, &acc("w3.cabal.testnet"), &acc("kaito.cabal.testnet")), "three hops counts");
+    // a fourth hop: mira is funded by exchange, dex by mira
+    ctx("exchange.cabal.testnet", NEAR / 5, 5_000);
+    c.fund(1, acc("mira.cabal.testnet"));
+    ctx("mira.cabal.testnet", NEAR / 10, 6_000);
+    c.fund(1, acc("w4.cabal.testnet"));
+    assert!(!c.traces_to(1, &acc("w4.cabal.testnet"), &acc("kaito.cabal.testnet")), "w4 -> mira -> exchange -> relay -> kaito is 4 hops; the walk gives up after 3");
+}
+
+#[test]
+fn a_funding_cycle_terminates() {
+    let mut c = opened();
+    ctx("mira.cabal.testnet", NEAR / 10, 2_000);
+    c.fund(1, acc("dex.cabal.testnet"));
+    ctx("dex.cabal.testnet", NEAR / 10, 3_000);
+    c.fund(1, acc("mira.cabal.testnet"));
+    assert!(!c.traces_to(1, &acc("dex.cabal.testnet"), &acc("kaito.cabal.testnet")));
+}
+
+#[test]
+fn records_count_tables_catches_and_the_fastest_time() {
+    let mut c = opened();
+    fund_sides(&mut c);
+    ctx("alice.testnet", NEAR / 20, 31_000);
+    c.expose(1, 0);
+    ctx("bob.testnet", NEAR / 20, 11_000);
+    c.expose(1, 0);
+    ctx("carol.testnet", NEAR / 20, 8_000);
+    c.expose(1, 2);
+    ctx("house.cabal.testnet", 0, 65_000);
+    c.reveal(1, 0, sides(), "pepper".into());
+    let a = c.record_of(acc("alice.testnet"));
+    let b = c.record_of(acc("bob.testnet"));
+    let k = c.record_of(acc("carol.testnet"));
+    assert_eq!((a.played, a.caught, a.best_ms), (1, 1, 30_000));
+    assert_eq!((b.played, b.caught, b.best_ms), (1, 1, 10_000));
+    assert_eq!((k.played, k.caught, k.best_ms), (1, 0, 0));
+    assert_eq!(c.record_of(acc("nobody.testnet")), Record::default());
+}
+
+#[test]
+fn accusers_carry_the_time_they_filed() {
+    let mut c = opened();
+    ctx("alice.testnet", NEAR / 20, 21_000);
+    c.expose(1, 1);
+    assert_eq!(c.get_round(1).unwrap().accusers[0].at_ms, 20_000);
 }

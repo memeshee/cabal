@@ -64,6 +64,12 @@ pub struct ChatLine {
     /// "kol" | "you" | "house"
     pub kind: &'static str,
     pub via: Option<Via>,
+    /// Set when this line is a caller's answer to one of the standard questions.
+    pub claim_q: Option<u8>,
+    pub claim_seat: Option<u8>,
+    pub claim_tag: Option<&'static str>,
+    /// Whether the claim was true. Withheld (None) until the table is settled.
+    pub claim_true: Option<bool>,
 }
 
 #[derive(Serialize)]

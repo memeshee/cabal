@@ -1,7 +1,11 @@
 //! Dossiers: what anyone can learn about a wallet from the public feed alone.
 //!
 //! Used three ways: as the evidence cards in the UI, as the solver that proves a table is winnable from the chain
-//! (the self-test runs it against real testnet data), and as the post-reveal autopsy. It never sees the hidden role.
+//! (the self-test runs it against real testnet data and the plan tests run it over hundreds of seeds), and as the
+//! post-reveal autopsy. It never sees the hidden role.
+//!
+//! Funding is a *trail*: each wallet's first funder, then that funder's first funder, up to a few hops. A trail that
+//! passes through a lane (the exchange) is laundered: it has no owner, so it proves nothing by itself.
 
 use std::collections::HashMap;
 
@@ -35,9 +39,13 @@ pub struct SeatV {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Dossier {
     pub wallet: String,
-    /// Seat index when the funder is a KOL wallet, `None` for the exchange or anything else.
-    pub funder_seat: Option<usize>,
+    /// The account that first paid for this wallet.
     pub funder: String,
+    /// Seat index when that account is a caller's own wallet.
+    pub funder_seat: Option<usize>,
+    /// The caller at the end of the funding trail, when the trail does not pass through the exchange.
+    /// Withheld from the live API; it is the answer for the Rookie and Hop tiers.
+    pub root_seat: Option<usize>,
     pub funded_ms: u64,
     pub funded_idx: u32,
     pub first_buy_ms: Option<u64>,
@@ -45,46 +53,74 @@ pub struct Dossier {
     pub chips_bought: u64,
     pub first_sell_ms: Option<u64>,
     pub chips_sold: u64,
-    /// When the funder's own call was posted, if it was a KOL.
+    /// When the trail's root caller posted their call.
     pub funder_call_ms: Option<u64>,
-    /// Positive when the wallet bought before its funder's call.
+    /// Positive when the wallet bought before that call.
     pub lead_ms: Option<i64>,
-    /// Seconds after the funder's call that the first sell landed, when it did.
+    /// Milliseconds after that call that the first sell landed.
     pub dumped_after_ms: Option<i64>,
 }
 
-/// One dossier per wallet that first appears as the target of a `Fund`.
-pub fn dossiers(feed: &[EntryV], seats: &[SeatV]) -> Vec<Dossier> {
+const MAX_HOPS: usize = 4;
+
+/// One dossier per wallet that someone paid for. Lanes (the exchange) and the callers' own wallets are not rows.
+pub fn dossiers(feed: &[EntryV], seats: &[SeatV], lanes: &[String]) -> Vec<Dossier> {
     let seat_of: HashMap<&str, usize> = seats.iter().enumerate().map(|(i, s)| (s.wallet.as_str(), i)).collect();
+    let is_lane = |a: &str| lanes.iter().any(|l| l == a);
     let mut call_ms: HashMap<usize, u64> = HashMap::new();
     for e in feed.iter().filter(|e| e.kind == "Call") {
         if let Some(&s) = seat_of.get(e.actor.as_str()) {
             call_ms.entry(s).or_insert(e.ts_ms);
         }
     }
-    let mut out: Vec<Dossier> = vec![];
+    // first funder per wallet, like the contract records it
+    let mut first: HashMap<&str, (&str, u64, u32)> = HashMap::new();
+    let mut order: Vec<&str> = vec![];
     for e in feed.iter().filter(|e| e.kind == "Fund") {
-        let Some(to) = e.other.as_ref() else { continue };
-        if out.iter().any(|d| &d.wallet == to) {
-            continue; // the first funder is the one the contract records
+        let Some(to) = e.other.as_deref() else { continue };
+        if !first.contains_key(to) {
+            first.insert(to, (e.actor.as_str(), e.ts_ms, e.idx));
+            order.push(to);
         }
-        let funder_seat = seat_of.get(e.actor.as_str()).copied();
+    }
+    let root = |w: &str| -> Option<usize> {
+        let mut cur = w;
+        for _ in 0..MAX_HOPS {
+            let (f, _, _) = first.get(cur)?;
+            if let Some(&s) = seat_of.get(f) {
+                return Some(s);
+            }
+            if is_lane(f) {
+                return None;
+            }
+            cur = f;
+        }
+        None
+    };
+    let mut out = vec![];
+    for to in order {
+        if is_lane(to) || seat_of.contains_key(to) {
+            continue;
+        }
+        let (funder, funded_ms, funded_idx) = first[to];
+        let root_seat = root(to);
         let mut d = Dossier {
-            wallet: to.clone(),
-            funder_seat,
-            funder: e.actor.clone(),
-            funded_ms: e.ts_ms,
-            funded_idx: e.idx,
+            wallet: to.to_string(),
+            funder: funder.to_string(),
+            funder_seat: seat_of.get(funder).copied(),
+            root_seat,
+            funded_ms,
+            funded_idx,
             first_buy_ms: None,
             first_buy_idx: None,
             chips_bought: 0,
             first_sell_ms: None,
             chips_sold: 0,
-            funder_call_ms: funder_seat.and_then(|s| call_ms.get(&s).copied()),
+            funder_call_ms: root_seat.and_then(|s| call_ms.get(&s).copied()),
             lead_ms: None,
             dumped_after_ms: None,
         };
-        for t in feed.iter().filter(|t| &t.actor == to) {
+        for t in feed.iter().filter(|t| t.actor == to) {
             match t.kind.as_str() {
                 "Buy" => {
                     d.chips_bought += t.chips;
@@ -120,32 +156,69 @@ pub struct Verdict {
     pub runner_up: i32,
 }
 
-/// Score each seat by the pattern a careful reader would look for: fresh wallets that this seat funded, that bought
-/// clearly before its call, and that sold into the crowd after it. Returns the clear leader, if there is one.
-pub fn solve(feed: &[EntryV], seats: &[SeatV]) -> Option<Verdict> {
-    let mut score = vec![0i32; seats.len()];
-    for d in dossiers(feed, seats) {
-        let Some(s) = d.funder_seat else { continue };
-        if let Some(lead) = d.lead_ms {
-            if lead > 6_000 {
-                score[s] += 3;
-            }
-        }
-        if let Some(after) = d.dumped_after_ms {
-            if (0..40_000).contains(&after) {
-                score[s] += 2;
+/// A wallet front-runs a call when it bought clearly before it (but not long before), sold into the wave after it,
+/// and no other call fell in between, so the dump belongs to that one call.
+pub const LEAD_MIN_MS: u64 = 6_000;
+pub const LEAD_MAX_MS: u64 = 32_000;
+pub const DUMP_MIN_MS: u64 = 3_000;
+pub const DUMP_MAX_MS: u64 = 40_000;
+
+fn timing_scores(feed: &[EntryV], seats: &[SeatV], lanes: &[String], score: &mut [i32]) {
+    let seat_of: HashMap<&str, usize> = seats.iter().enumerate().map(|(i, s)| (s.wallet.as_str(), i)).collect();
+    let calls: Vec<(usize, u64)> = feed
+        .iter()
+        .filter(|e| e.kind == "Call")
+        .filter_map(|e| seat_of.get(e.actor.as_str()).map(|s| (*s, e.ts_ms)))
+        .collect();
+    for d in dossiers(feed, seats, lanes) {
+        let (Some(buy), Some(sell)) = (d.first_buy_ms, d.first_sell_ms) else { continue };
+        for &(k, c) in &calls {
+            let lead_ok = buy + LEAD_MIN_MS <= c && c - buy <= LEAD_MAX_MS;
+            let dump_ok = sell >= c + DUMP_MIN_MS && sell <= c + DUMP_MAX_MS;
+            let alone = !calls.iter().any(|&(_, o)| o != c && o > buy && o < sell);
+            if lead_ok && dump_ok && alone {
+                score[k] += 3;
             }
         }
     }
+}
+
+fn funding_scores(feed: &[EntryV], seats: &[SeatV], lanes: &[String], score: &mut [i32]) {
+    for d in dossiers(feed, seats, lanes) {
+        if let Some(s) = d.root_seat {
+            score[s] += 2;
+        }
+    }
+}
+
+fn leader(score: &[i32]) -> Option<Verdict> {
     let mut ranked: Vec<(usize, i32)> = score.iter().copied().enumerate().collect();
     ranked.sort_by_key(|r| std::cmp::Reverse(r.1));
-    let (best, best_score) = ranked[0];
+    let (best, best_score) = *ranked.first()?;
     let runner = ranked.get(1).map(|r| r.1).unwrap_or(0);
-    if best_score > 0 && best_score > runner {
-        Some(Verdict { seat: best, score: best_score, runner_up: runner })
-    } else {
-        None
+    (best_score > 0 && best_score > runner).then_some(Verdict { seat: best, score: best_score, runner_up: runner })
+}
+
+/// The full reading a careful player does: funding trails and timing together.
+pub fn solve(feed: &[EntryV], seats: &[SeatV], lanes: &[String]) -> Option<Verdict> {
+    solve_with(feed, seats, lanes, true)
+}
+
+/// `use_funding = false` is the timing-only reading, the one that must still work on the Ghost tier.
+pub fn solve_with(feed: &[EntryV], seats: &[SeatV], lanes: &[String], use_funding: bool) -> Option<Verdict> {
+    let mut score = vec![0i32; seats.len()];
+    timing_scores(feed, seats, lanes, &mut score);
+    if use_funding {
+        funding_scores(feed, seats, lanes, &mut score);
     }
+    leader(&score)
+}
+
+/// Funding trails only. Names the cabal on the Rookie and Hop tiers and finds nothing on Ghost.
+pub fn solve_funding_only(feed: &[EntryV], seats: &[SeatV], lanes: &[String]) -> Option<Verdict> {
+    let mut score = vec![0i32; seats.len()];
+    funding_scores(feed, seats, lanes, &mut score);
+    leader(&score)
 }
 
 #[cfg(test)]
@@ -158,6 +231,10 @@ mod tests {
 
     fn seats() -> Vec<SeatV> {
         ["a", "b", "c", "d"].iter().map(|h| SeatV { handle: format!("@{h}"), wallet: format!("{h}w") }).collect()
+    }
+
+    fn lanes() -> Vec<String> {
+        vec!["exchange".into()]
     }
 
     fn feed() -> Vec<EntryV> {
@@ -180,39 +257,80 @@ mod tests {
     }
 
     #[test]
-    fn builds_a_dossier_per_fresh_wallet() {
-        let d = dossiers(&feed(), &seats());
-        assert_eq!(d.len(), 3);
+    fn builds_a_dossier_per_fresh_wallet_and_skips_lanes() {
+        let mut f = feed();
+        f.push(e(11, 1_000, "Fund", "bw", Some("exchange"), 0));
+        let d = dossiers(&f, &seats(), &lanes());
+        assert_eq!(d.len(), 3, "the exchange lane is not a wallet row");
         let s1 = d.iter().find(|x| x.wallet == "s1").unwrap();
         assert_eq!(s1.funder_seat, Some(1));
+        assert_eq!(s1.root_seat, Some(1));
         assert_eq!(s1.lead_ms, Some(18_000));
         assert_eq!(s1.dumped_after_ms, Some(8_000));
         let f1 = d.iter().find(|x| x.wallet == "f1").unwrap();
         assert_eq!(f1.lead_ms, Some(-12_000), "friend bought after its funder's call");
         assert_eq!(f1.dumped_after_ms, None);
         let wh = d.iter().find(|x| x.wallet == "wh").unwrap();
-        assert_eq!(wh.funder_seat, None);
-        assert_eq!(wh.lead_ms, None);
+        assert_eq!((wh.funder_seat, wh.root_seat, wh.lead_ms), (None, None, None));
+    }
+
+    #[test]
+    fn a_relay_keeps_the_trail_but_the_exchange_launders_it() {
+        let f = vec![
+            e(0, 1_000, "Fund", "bw", Some("relay"), 0),
+            e(1, 6_000, "Fund", "relay", Some("s1"), 0),
+            e(2, 2_000, "Fund", "bw", Some("exchange"), 0),
+            e(3, 7_000, "Fund", "exchange", Some("g1"), 0),
+        ];
+        let d = dossiers(&f, &seats(), &lanes());
+        let s1 = d.iter().find(|x| x.wallet == "s1").unwrap();
+        assert_eq!((s1.funder.as_str(), s1.funder_seat, s1.root_seat), ("relay", None, Some(1)), "two legs, still owned by the cabal");
+        let g1 = d.iter().find(|x| x.wallet == "g1").unwrap();
+        assert_eq!((g1.funder.as_str(), g1.root_seat), ("exchange", None), "laundered through the exchange");
     }
 
     #[test]
     fn solver_finds_the_cabal_from_the_chain_alone() {
-        let v = solve(&feed(), &seats()).unwrap();
+        let v = solve(&feed(), &seats(), &lanes()).unwrap();
         assert_eq!(v.seat, 1);
         assert!(v.score > v.runner_up);
     }
 
     #[test]
     fn solver_refuses_to_guess_without_evidence() {
-        let f: Vec<EntryV> = feed().into_iter().filter(|x| !(x.kind == "Fund" && x.actor == "bw")).collect();
-        assert!(solve(&f, &seats()).is_none());
+        // Only the exchange whale remains: it has no owner, no dump, and no call to front-run.
+        let f: Vec<EntryV> = feed().into_iter().filter(|x| matches!(x.actor.as_str(), "exchange" | "wh" | "house")).collect();
+        assert!(solve(&f, &seats(), &lanes()).is_none());
     }
 
     #[test]
     fn first_funder_wins_like_the_contract() {
         let mut f = feed();
         f.push(e(11, 70_000, "Fund", "dw", Some("s1"), 0));
-        let d = dossiers(&f, &seats());
+        let d = dossiers(&f, &seats(), &lanes());
         assert_eq!(d.iter().find(|x| x.wallet == "s1").unwrap().funder_seat, Some(1));
+    }
+
+    #[test]
+    fn a_wallet_that_sits_across_several_calls_is_not_a_front_runner() {
+        // bought before every call and sold after all of them: the whale shape
+        let f = vec![
+            e(0, 5_000, "Fund", "exchange", Some("wh"), 0),
+            e(1, 10_000, "Buy", "wh", None, 90),
+            e(2, 30_000, "Call", "aw", None, 1),
+            e(3, 52_000, "Call", "bw", None, 1),
+            e(4, 70_000, "Sell", "wh", None, 90),
+        ];
+        assert!(solve_with(&f, &seats(), &lanes(), false).is_none());
+    }
+
+    #[test]
+    fn a_wallet_that_never_sells_scores_nothing() {
+        let f = vec![
+            e(0, 5_000, "Fund", "exchange", Some("dc"), 0),
+            e(1, 20_000, "Buy", "dc", None, 90),
+            e(2, 30_000, "Call", "aw", None, 1),
+        ];
+        assert!(solve_with(&f, &seats(), &lanes(), false).is_none());
     }
 }

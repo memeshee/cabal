@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { fmtNear, near } from "@/lib/format";
+import { standings } from "@/lib/autopsy";
+import { fmtNear, near, shortAcct } from "@/lib/format";
 import type { TableView } from "@/lib/types";
 
 async function sha256Hex(s: string): Promise<string> {
@@ -50,6 +51,23 @@ export function Reveal({ view, mineSeat, myAccount, onAgain, again }: { view: Ta
           {youLost && <>Not this time. {view.seats[mineSeat!].handle} was honest. Look at the wallet files: who paid for the fresh wallets that bought before a call?</>}
           {mineSeat === null && (caught ? <>Caught. Their {r.sides.length} side wallets were burned and the pot paid out.</> : <>Nobody accused them, so they keep the bag.</>)}
         </p>
+        {(() => {
+          const st = standings(view, myAccount);
+          if (st.length < 2) return null;
+          return (
+            <div className="standings" aria-label="Everyone who accused someone at this table">
+              <div className="mono" style={{ fontSize: 11, letterSpacing: "0.14em", textTransform: "uppercase" }}><span className="dim">At this table</span></div>
+              {st.map((x, i) => (
+                <div key={x.who} className={`row ${x.isYou ? "me" : ""}`}>
+                  <span className="mono dim">{x.correct ? i + 1 : "·"}</span>
+                  <span className="mono">{x.isYou ? "you" : shortAcct(x.who)}</span>
+                  <span className="mono">{x.handle}</span>
+                  <span className={`mono ${x.correct ? "up" : "down"}`}>{x.correct ? `${x.seconds}s` : "wrong"}</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
         <button className="btn go big" onClick={onAgain} disabled={again}>{again ? "Dealing…" : "Deal another table"}</button>
       </div>
       <div className="r">

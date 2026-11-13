@@ -23,10 +23,10 @@ use crate::{
     chain::{mnear, Chain},
     config::Config,
     dossier::{dossiers, solve, Dossier, EntryV, SeatV, Verdict},
-    kols::{build_prompt, clean_question, scripted, Intent, Public, Tone, PERSONAS},
+    kols::{build_prompt, claim, clean_question, scripted, Facts, Intent, Public, Tone, PERSONAS, QUESTIONS},
     llm::{Llm, Via},
     model::{ActionResult, ChatLine, Phase, RoundV},
-    plan::{self, Act, Plan, Who, N_CROWD, N_KOLS, N_SIDES, PLAY_SECS, REVEAL_SECS},
+    plan::{self, Act, Plan, Tier, Who, N_CROWD, N_KOLS, N_SIDES, PLAY_SECS, REVEAL_SECS},
 };
 
 /// Mirrors the contract's `MAX_TEXT`.
@@ -38,14 +38,7 @@ const GAS_TX: u64 = 20;
 const GAS_CALL: u64 = 15;
 const TICKERS: [&str; 10] = ["FROG", "TOAD", "MOON", "NEKO", "GIGA", "SMOL", "WOJAK", "DEGEN", "PEPE2", "BONKER"];
 
-// Warm-up targets in milliNEAR; a wallet is topped up when it falls under 60% of its target.
-// A cabal KOL pays for three side wallets (3 x 0.11) and buys (up to 0.11); crowd wallets buy up to 0.21 per call and
-// two calls can land close together. Targets leave room for that plus gas, and `warm_slot` refills below the floor.
-const T_KOL: u64 = 700;
-const T_CROWD: u64 = 700;
-const T_EXCHANGE: u64 = 300;
-const T_WHALE: u64 = 200;
-const T_FRIEND: u64 = 200;
+// Warm-up targets come from the plan, which proves in a test that no wallet is asked for more than it holds.
 /// A wallet is refilled whenever it holds less than this share of its target.
 const REFILL_BELOW_PCT: u128 = 85;
 
@@ -54,6 +47,8 @@ pub struct Wallets {
     pub crowd: Vec<AccountId>,
     pub whale: AccountId,
     pub friend: AccountId,
+    pub decoy: AccountId,
+    pub relay: AccountId,
     pub exchange: AccountId,
     pub sides: Vec<AccountId>,
 }
@@ -66,6 +61,8 @@ impl Wallets {
             Who::Crowd(i) => self.crowd[i].clone(),
             Who::Whale => self.whale.clone(),
             Who::Friend => self.friend.clone(),
+            Who::Decoy => self.decoy.clone(),
+            Who::Relay => self.relay.clone(),
             Who::Exchange => self.exchange.clone(),
         }
     }
@@ -86,6 +83,10 @@ struct TState {
     opened_at: Option<Instant>,
     reveal_hash: Option<String>,
     ended: Option<Instant>,
+    /// When each player last touched this table, for the "n at this table" count.
+    seen: HashMap<String, Instant>,
+    /// (player, seat, question) already asked, so the same question cannot be spammed.
+    asked_q: std::collections::HashSet<(String, usize, u8)>,
 }
 
 pub struct Table {
@@ -93,6 +94,7 @@ pub struct Table {
     pub slot: usize,
     pub nonce: u64,
     pub seed: u64,
+    pub tier: Tier,
     pub demo: bool,
     pub ticker: String,
     owner: String,
@@ -107,9 +109,15 @@ struct Saved {
     slot: usize,
     nonce: u64,
     seed: u64,
+    #[serde(default = "default_tier")]
+    tier: Tier,
     demo: bool,
     ticker: String,
     round: Option<u32>,
+}
+
+fn default_tier() -> Tier {
+    Tier::Rookie
 }
 
 #[derive(Default)]
@@ -173,6 +181,8 @@ pub struct TableView {
     pub phase: Phase,
     pub round: Option<u32>,
     pub ticker: String,
+    pub tier: Tier,
+    pub players: usize,
     pub demo: bool,
     pub note: String,
     pub error: Option<String>,
@@ -241,6 +251,8 @@ impl Game {
             crowd: (0..N_CROWD).map(|i| self.w(&format!("slot{slot}/crowd/{i}"))).collect(),
             whale: self.w(&format!("slot{slot}/whale")),
             friend: self.w(&format!("slot{slot}/friend")),
+            decoy: self.w(&format!("slot{slot}/decoy")),
+            relay: self.w(&format!("slot{slot}/relay")),
             exchange: self.w(&format!("slot{slot}/exchange")),
             sides: vec![],
         }
@@ -327,7 +339,7 @@ impl Game {
     }
 
     /// Start dealing a table. Returns immediately; the table is `dealing` until it is open on-chain.
-    pub fn start_table(self: &Arc<Self>, demo: bool, ip: &str) -> Result<Arc<Table>> {
+    pub fn start_table(self: &Arc<Self>, tier: Tier, demo: bool, ip: &str) -> Result<Arc<Table>> {
         {
             let mut l = self.limits.lock().unwrap();
             let day = now_ms() / 86_400_000;
@@ -361,8 +373,8 @@ impl Game {
             l.tables.entry(ip.to_string()).or_default().push(Instant::now());
         }
         let nonce = now_ms();
-        let seed = if demo { self.cfg.demo_seed } else { rand::random::<u64>() };
-        let t = Arc::new(self.make_table(slot, nonce, seed, demo, ip.to_string(), None));
+        let seed = if demo { plan::demo_seed(tier) } else { rand::random::<u64>() };
+        let t = Arc::new(self.make_table(slot, nonce, seed, tier, demo, ip.to_string(), None));
         self.tables.lock().unwrap().insert(t.key.clone(), t.clone());
         let g = self.clone();
         let tt = t.clone();
@@ -380,7 +392,7 @@ impl Game {
         Ok(t)
     }
 
-    fn make_table(&self, slot: usize, nonce: u64, seed: u64, demo: bool, owner: String, ticker: Option<String>) -> Table {
+    fn make_table(&self, slot: usize, nonce: u64, seed: u64, tier: Tier, demo: bool, owner: String, ticker: Option<String>) -> Table {
         let mut r = StdRng::seed_from_u64(seed ^ 0x7ac3);
         let ticker = ticker.unwrap_or_else(|| TICKERS[r.gen_range(0..TICKERS.len())].to_string());
         Table {
@@ -388,10 +400,11 @@ impl Game {
             slot,
             nonce,
             seed,
+            tier,
             demo,
             ticker,
             owner,
-            plan: Plan::generate(seed, self.salt_for(nonce)),
+            plan: Plan::generate(seed, self.salt_for(nonce), tier),
             wallets: self.wallets_for(slot, nonce),
             st: Mutex::new(TState {
                 phase: Phase::Dealing,
@@ -408,6 +421,8 @@ impl Game {
                 opened_at: None,
                 reveal_hash: None,
                 ended: None,
+                seen: HashMap::new(),
+                asked_q: Default::default(),
             }),
         }
     }
@@ -426,7 +441,7 @@ impl Game {
     fn save(&self, t: &Table) {
         let mut all: Vec<Saved> = std::fs::read_to_string(&self.store).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
         all.retain(|s| s.key != t.key);
-        all.push(Saved { key: t.key.clone(), slot: t.slot, nonce: t.nonce, seed: t.seed, demo: t.demo, ticker: t.ticker.clone(), round: t.st.lock().unwrap().round });
+        all.push(Saved { key: t.key.clone(), slot: t.slot, nonce: t.nonce, seed: t.seed, tier: t.tier, demo: t.demo, ticker: t.ticker.clone(), round: t.st.lock().unwrap().round });
         let _ = std::fs::write(&self.store, serde_json::to_string(&all).unwrap_or_default());
     }
 
@@ -448,7 +463,7 @@ impl Game {
                 continue;
             }
             self.slot_busy.lock().unwrap()[s.slot] = true;
-            let t = Arc::new(self.make_table(s.slot, s.nonce, s.seed, s.demo, "recovered".into(), Some(s.ticker.clone())));
+            let t = Arc::new(self.make_table(s.slot, s.nonce, s.seed, s.tier, s.demo, "recovered".into(), Some(s.ticker.clone())));
             {
                 let mut st = t.st.lock().unwrap();
                 st.round = Some(round);
@@ -471,11 +486,13 @@ impl Game {
     pub async fn warm_slot(&self, slot: usize) {
         let w = self.slot_wallets(slot);
         let mut wanted: Vec<(AccountId, u64)> = vec![];
-        wanted.extend(w.kols.iter().map(|a| (a.clone(), T_KOL)));
-        wanted.extend(w.crowd.iter().map(|a| (a.clone(), T_CROWD)));
-        wanted.push((w.exchange.clone(), T_EXCHANGE));
-        wanted.push((w.whale.clone(), T_WHALE));
-        wanted.push((w.friend.clone(), T_FRIEND));
+        wanted.extend(w.kols.iter().map(|a| (a.clone(), plan::BUDGET_KOL)));
+        wanted.extend(w.crowd.iter().map(|a| (a.clone(), plan::BUDGET_CROWD)));
+        wanted.push((w.exchange.clone(), plan::BUDGET_EXCHANGE));
+        wanted.push((w.whale.clone(), plan::BUDGET_WHALE));
+        wanted.push((w.friend.clone(), plan::BUDGET_FRIEND));
+        wanted.push((w.decoy.clone(), plan::BUDGET_DECOY));
+        wanted.push((w.relay.clone(), plan::BUDGET_RELAY));
         let house_bal = self.chain.balance(&self.chain.house).await;
         for (acct, target) in wanted {
             let bal = self.chain.balance(&acct).await;
@@ -521,7 +538,7 @@ impl Game {
     fn say(&self, t: &Table, who: &str, text: String, kind: &'static str, via: Option<Via>) {
         let mut s = t.st.lock().unwrap();
         let id = s.chat.len() as u32;
-        s.chat.push(ChatLine { id, ts_ms: now_ms(), who: who.to_string(), text, kind, via });
+        s.chat.push(ChatLine { id, ts_ms: now_ms(), who: who.to_string(), text, kind, via, claim_q: None, claim_seat: None, claim_tag: None, claim_true: None });
     }
 
     fn set_note(&self, t: &Table, note: &str) {
@@ -543,7 +560,9 @@ impl Game {
         let commitment = plan::commitment(t.plan.cabal, &sides, &t.plan.salt);
         let seats: Vec<Value> = (0..N_KOLS).map(|i| json!({ "handle": PERSONAS[i].handle, "wallet": t.wallets.kols[i] })).collect();
         let mut funders: Vec<String> = t.wallets.kols.iter().map(|a| a.to_string()).collect();
+        // The order matters: the views read index N_KOLS as the exchange lane and N_KOLS + 1 as the relay.
         funders.push(t.wallets.exchange.to_string());
+        funders.push(t.wallets.relay.to_string());
         let open = self
             .chain
             .call(
@@ -904,59 +923,153 @@ impl Game {
         }
     }
 
-    /// A player asks a KOL something at the table. The KOL answers in character from public facts only.
-    pub async fn player_ask(&self, t: &Table, who: &AccountId, seat: usize, text: &str) -> Result<Vec<ChatLine>, String> {
+    /// Record that a player is at this table, for the presence count and the lobby.
+    pub fn touch(&self, t: &Table, who: &AccountId) {
+        let mut s = t.st.lock().unwrap();
+        s.seen.insert(who.to_string(), Instant::now());
+    }
+
+    fn players_at(s: &TState) -> usize {
+        s.seen.values().filter(|t| t.elapsed() < Duration::from_secs(30)).count()
+    }
+
+    /// A player asks a KOL something at the table. With `q` set it is one of the standard questions, answered by a
+    /// claim the code decides; with only `text` it is free chat, answered in character from public facts.
+    pub async fn player_ask(&self, t: &Table, who: &AccountId, seat: usize, q: Option<u8>, text: &str) -> Result<Vec<ChatLine>, String> {
         {
             let s = t.st.lock().unwrap();
             if s.phase != Phase::Playing {
                 return Err("The market is closed.".into());
             }
         }
-        let q = clean_question(text);
-        if q.chars().count() < 2 {
-            return Err("Ask something.".into());
-        }
         if seat >= N_KOLS {
             return Err("No such seat.".into());
         }
+        if let Some(qi) = q {
+            if qi as usize >= QUESTIONS.len() {
+                return Err("No such question.".into());
+            }
+        }
+        let free = clean_question(text);
+        if q.is_none() && free.chars().count() < 2 {
+            return Err("Ask something.".into());
+        }
         {
             let mut s = t.st.lock().unwrap();
+            s.seen.insert(who.to_string(), Instant::now());
             let n = s.asked.entry(who.to_string()).or_default();
-            if *n >= 12 {
-                return Err("You've asked plenty. Read the tape.".into());
+            if *n >= 14 {
+                return Err("You've asked plenty. Read the board.".into());
             }
-            if s.last_ask.get(who.as_str()).map(|x| x.elapsed() < Duration::from_secs(3)).unwrap_or(false) {
+            if s.last_ask.get(who.as_str()).map(|x| x.elapsed() < Duration::from_millis(1500)).unwrap_or(false) {
                 return Err("One question at a time.".into());
+            }
+            if let Some(qi) = q {
+                if !s.asked_q.insert((who.to_string(), seat, qi)) {
+                    return Err(format!("You already asked {} that.", PERSONAS[seat].handle));
+                }
             }
             *s.asked.get_mut(who.as_str()).unwrap() += 1;
             s.last_ask.insert(who.to_string(), Instant::now());
         }
         let tag = &who.as_str()[..4];
-        self.say(t, &format!("you ({tag}) → {}", PERSONAS[seat].handle), q.clone(), "you", None);
-        let (reply, via) = self.line(t, seat, Intent::Answer, None, Some(&q)).await;
-        self.say(t, PERSONAS[seat].handle, reply, "kol", Some(via));
+        let asker = format!("you ({tag}) → {}", PERSONAS[seat].handle);
+        match q {
+            Some(qi) => {
+                self.say(t, &asker, QUESTIONS[qi as usize].ask.to_string(), "you", None);
+                let out = claim(qi, facts_for(&t.plan, seat));
+                let (mut reply, mut via) = self.line(t, seat, Intent::Claim { q: qi }, None, Some(&out.text)).await;
+                if via == Via::Scripted || !consistent(&out.text, &reply) {
+                    reply = out.text.clone();
+                    via = Via::Scripted;
+                }
+                let mut st = t.st.lock().unwrap();
+                let id = st.chat.len() as u32;
+                st.chat.push(ChatLine {
+                    id,
+                    ts_ms: now_ms(),
+                    who: PERSONAS[seat].handle.to_string(),
+                    text: reply,
+                    kind: "kol",
+                    via: Some(via),
+                    claim_q: Some(qi),
+                    claim_seat: Some(seat as u8),
+                    claim_tag: Some(out.tag),
+                    claim_true: None,
+                });
+            }
+            None => {
+                self.say(t, &asker, free.clone(), "you", None);
+                let (reply, via) = self.line(t, seat, Intent::Answer, None, Some(&free)).await;
+                self.say(t, PERSONAS[seat].handle, reply, "kol", Some(via));
+            }
+        }
         let s = t.st.lock().unwrap();
         let n = s.chat.len();
         Ok(s.chat[n.saturating_sub(2)..].to_vec())
     }
 
+    // ───────────────────────── lobby ─────────────────────────
+
+    /// Tables a visitor can still join.
+    pub fn lobby(&self) -> Vec<LobbyRow> {
+        let tables = self.tables.lock().unwrap();
+        let mut rows: Vec<LobbyRow> = tables
+            .values()
+            .filter_map(|t| {
+                let s = t.st.lock().unwrap();
+                if s.phase != Phase::Playing {
+                    return None;
+                }
+                let elapsed = s.opened_at.map(|o| o.elapsed().as_millis() as u64)?;
+                if elapsed + 20_000 > PLAY_SECS as u64 * 1000 {
+                    return None;
+                }
+                Some(LobbyRow { key: t.key.clone(), ticker: t.ticker.clone(), tier: t.tier, elapsed_ms: elapsed, players: Self::players_at(&s), demo: t.demo })
+            })
+            .collect();
+        rows.sort_by_key(|r| r.elapsed_ms);
+        rows
+    }
+
     // ───────────────────────── views ─────────────────────────
+
+    /// The exchange lane and the relay, as the contract's `funders` list orders them: callers, then exchange, then relay.
+    fn lanes(rv: &RoundV) -> Vec<String> {
+        rv.funders.get(N_KOLS).cloned().into_iter().collect()
+    }
 
     fn labels(seats: &[SeatV], rv: &RoundV) -> HashMap<String, String> {
         let mut m = HashMap::new();
         for s in seats {
             m.insert(s.wallet.clone(), s.handle.clone());
         }
-        for f in &rv.funders {
-            m.entry(f.clone()).or_insert_with(|| "exchange".to_string());
+        if let Some(x) = rv.funders.get(N_KOLS) {
+            m.insert(x.clone(), "exchange".to_string());
         }
-        m.insert(rv.seats.first().map(|_| "house".to_string()).unwrap_or_default(), String::new());
-        m.remove("house");
+        if let Some(r) = rv.funders.get(N_KOLS + 1) {
+            m.insert(r.clone(), "relay".to_string());
+        }
         m
     }
 
+    /// The tier of a past table, read off the chain: the contract does not store it.
+    fn infer_tier(rv: &RoundV, feed: &[EntryV]) -> Tier {
+        let relay = rv.funders.get(N_KOLS + 1);
+        let exchange = rv.funders.get(N_KOLS);
+        let seat_wallets: Vec<&String> = rv.seats.iter().map(|s| &s.wallet).collect();
+        if feed.iter().any(|e| e.kind == "Fund" && e.other.as_ref() == relay) {
+            Tier::Hop
+        } else if feed.iter().any(|e| e.kind == "Fund" && e.other.as_ref() == exchange && seat_wallets.contains(&&e.actor)) {
+            Tier::Ghost
+        } else {
+            Tier::Rookie
+        }
+    }
+
     /// Build the public view from chain data. Used for live tables (with chat) and for any past round (without).
-    pub fn view_from(&self, spoil: bool, key: &str, phase: Phase, ticker: &str, demo: bool, note: String, error: Option<String>, rv: Option<RoundV>, feed: &[EntryV], chat: &[ChatLine], since_feed: usize, since_chat: usize, elapsed_ms: Option<u64>, reveal_hash: Option<String>) -> TableView {
+    pub fn view_from(&self, c: ViewIn) -> TableView {
+        let ViewIn { spoil, key, phase, ticker, tier, players, demo, note, error, rv, feed, chat, since_feed, since_chat, elapsed_ms, reveal_hash } = c;
         let seats_v: Vec<SeatV> = rv.as_ref().map(|r| r.seats.clone()).unwrap_or_default();
         let seats: Vec<SeatPublic> = seats_v
             .iter()
@@ -964,18 +1077,20 @@ impl Game {
             .map(|(i, s)| SeatPublic { handle: s.handle.clone(), wallet: s.wallet.clone(), tagline: PERSONAS[i.min(3)].tagline, color: PERSONAS[i.min(3)].color })
             .collect();
         let labels = rv.as_ref().map(|r| Self::labels(&seats_v, r)).unwrap_or_default();
-        // While a table is live the API serves raw facts only. The derived timing fields and the solver's verdict would
-        // hand the answer to anyone reading the JSON, so they appear after the reveal (or to the self-test).
+        let lanes = rv.as_ref().map(Self::lanes).unwrap_or_default();
+        // While a table is live the API serves raw facts only. Derived timing, the trail's root and the solver's verdict
+        // would hand the answer to anyone reading the JSON, so they appear after the reveal (or to the self-test).
         let open = !phase.is_final() && !spoil;
-        let mut dos = dossiers(feed, &seats_v);
+        let mut dos = dossiers(feed, &seats_v, &lanes);
         if open {
             for d in dos.iter_mut() {
                 d.lead_ms = None;
                 d.dumped_after_ms = None;
                 d.funder_call_ms = None;
+                d.root_seat = None;
             }
         }
-        let verdict = if seats_v.is_empty() || open { None } else { solve(feed, &seats_v) };
+        let verdict = if seats_v.is_empty() || open { None } else { solve(feed, &seats_v, &lanes) };
         let reveal = rv.as_ref().and_then(|r| {
             let (cs, salt) = (r.cabal_seat?, r.salt.clone()?);
             let pre = plan::preimage(cs as usize, &r.sides, &salt);
@@ -997,6 +1112,8 @@ impl Game {
             phase,
             round: rv.as_ref().map(|r| r.id),
             ticker: ticker.to_string(),
+            tier: tier.unwrap_or_else(|| rv.as_ref().map(|r| Self::infer_tier(r, feed)).unwrap_or(Tier::Rookie)),
+            players,
             demo,
             note,
             error,
@@ -1029,9 +1146,34 @@ impl Game {
 
     fn table_view_inner(&self, t: &Table, since_feed: usize, since_chat: usize, spoil: bool) -> TableView {
         let s = t.st.lock().unwrap();
-        let mut v = self.view_from(spoil, &t.key, s.phase, &t.ticker, t.demo, s.note.clone(), s.error.clone(), s.rv.clone(), &s.feed, &s.chat, since_feed, since_chat, s.opened_at.map(|o| o.elapsed().as_millis() as u64), s.reveal_hash.clone());
+        let mut v = self.view_from(ViewIn {
+            spoil,
+            key: &t.key,
+            phase: s.phase,
+            ticker: &t.ticker,
+            tier: Some(t.tier),
+            players: Self::players_at(&s),
+            demo: t.demo,
+            note: s.note.clone(),
+            error: s.error.clone(),
+            rv: s.rv.clone(),
+            feed: &s.feed,
+            chat: &s.chat,
+            since_feed,
+            since_chat,
+            elapsed_ms: s.opened_at.map(|o| o.elapsed().as_millis() as u64),
+            reveal_hash: s.reveal_hash.clone(),
+        });
         // The runner knows the round id as soon as the table opens, before the first chain poll lands.
         v.round = s.round.or(v.round);
+        // Whether a claim was true is only told once the table is settled.
+        if s.phase.is_final() {
+            for l in v.chat.iter_mut() {
+                if let (Some(q), Some(seat)) = (l.claim_q, l.claim_seat) {
+                    l.claim_true = Some(claim(q, facts_for(&t.plan, seat as usize)).truthful);
+                }
+            }
+        }
         v
     }
 
@@ -1056,6 +1198,108 @@ impl Game {
         };
         let ticker = rv.ticker.clone();
         // A past table's feed may have been pruned from the front; indexes are then not contiguous from zero.
-        Ok(self.view_from(false, &format!("r{id}"), phase, &ticker, false, String::new(), None, Some(rv), &feed, &[], 0, 0, None, None))
+        Ok(self.view_from(ViewIn {
+            spoil: false,
+            key: &format!("r{id}"),
+            phase,
+            ticker: &ticker,
+            tier: None,
+            players: 0,
+            demo: false,
+            note: String::new(),
+            error: None,
+            rv: Some(rv),
+            feed: &feed,
+            chat: &[],
+            since_feed: 0,
+            since_chat: 0,
+            elapsed_ms: None,
+            reveal_hash: None,
+        }))
+    }
+}
+
+pub struct ViewIn<'a> {
+    pub spoil: bool,
+    pub key: &'a str,
+    pub phase: Phase,
+    pub ticker: &'a str,
+    /// `None` for a past round: the tier is then read off the chain.
+    pub tier: Option<Tier>,
+    pub players: usize,
+    pub demo: bool,
+    pub note: String,
+    pub error: Option<String>,
+    pub rv: Option<RoundV>,
+    pub feed: &'a [EntryV],
+    pub chat: &'a [ChatLine],
+    pub since_feed: usize,
+    pub since_chat: usize,
+    pub elapsed_ms: Option<u64>,
+    pub reveal_hash: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct LobbyRow {
+    pub key: String,
+    pub ticker: String,
+    pub tier: Tier,
+    pub elapsed_ms: u64,
+    pub players: usize,
+    pub demo: bool,
+}
+
+/// What a caller's answers are checked against: the plan, and nothing a model said.
+fn facts_for(p: &Plan, seat: usize) -> Facts {
+    Facts { is_cabal: seat == p.cabal, funds_a_friend: seat == p.friend_of, buys_early_openly: p.conviction == Some(seat) }
+}
+
+/// A model's rephrasing must keep the claim's polarity. If it flips a "no" into a "yes", use the claim as written.
+fn consistent(claim_text: &str, reply: &str) -> bool {
+    let c = claim_text.trim().to_lowercase();
+    let words: Vec<String> = reply.to_lowercase().split(|ch: char| !ch.is_alphanumeric()).filter(|w| !w.is_empty()).map(String::from).collect();
+    let has = |w: &str| words.iter().any(|x| x == w);
+    if c.starts_with("no") {
+        !has("yes") && !has("yep") && !has("sure")
+    } else if c.starts_with("yes") || c.starts_with("one") {
+        !words.first().map(|w| w == "no" || w == "nope" || w == "nah").unwrap_or(false)
+    } else if c.starts_with("still holding") {
+        !has("sold") || has("haven") || has("not") || has("never")
+    } else {
+        true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_rephrasing_that_flips_the_claim_is_rejected() {
+        assert!(consistent("No. Just my own wallet.", "Nope, only this one, ser."));
+        assert!(!consistent("No. Just my own wallet.", "Yes, I run a couple of alts."));
+        assert!(consistent("Yes. A small position from my own wallet.", "Yeah, a small one from my main."));
+        assert!(!consistent("Yes. A small position from my own wallet.", "No way, I bought after."));
+        assert!(!consistent("One. A friend's wallet I topped up.", "Nah, nothing like that."));
+    }
+
+    #[test]
+    fn claim_facts_come_from_the_plan_only() {
+        let p = Plan::generate(20261169, "s".into(), Tier::Hop);
+        for seat in 0..N_KOLS {
+            let f = facts_for(&p, seat);
+            assert_eq!(f.is_cabal, seat == p.cabal);
+            assert_eq!(f.funds_a_friend, seat == p.friend_of);
+            assert_eq!(f.buys_early_openly, p.conviction == Some(seat));
+        }
+        // the cabal's answer to "any other wallets?" is false whichever tier it plays
+        for tier in Tier::ALL {
+            let p = Plan::generate(5, "s".into(), tier);
+            assert!(!claim(0, facts_for(&p, p.cabal)).truthful);
+            assert!(!claim(1, facts_for(&p, p.cabal)).truthful);
+            for seat in (0..N_KOLS).filter(|s| *s != p.cabal) {
+                assert!(claim(0, facts_for(&p, seat)).truthful && claim(1, facts_for(&p, seat)).truthful);
+            }
+        }
     }
 }

@@ -67,6 +67,18 @@ pub struct Accuser {
     pub who: AccountId,
     pub seat: u8,
     pub stake: U128,
+    /// Milliseconds after the table opened that this accusation was filed.
+    pub at_ms: u64,
+}
+
+/// A detective's lifetime tally, updated at every reveal they took part in.
+#[near(serializers = [borsh, json])]
+#[derive(Clone, Default, Debug, PartialEq, Eq)]
+pub struct Record {
+    pub played: u32,
+    pub caught: u32,
+    /// Fastest correct accusation in milliseconds since a table opened. 0 when none yet.
+    pub best_ms: u64,
 }
 
 /// One line of the public evidence feed.
@@ -152,6 +164,7 @@ pub struct Cabal {
     feed: LookupMap<(u32, u32), Entry>,
     chips: LookupMap<(u32, AccountId), u64>,
     funded_by: LookupMap<(u32, AccountId), AccountId>,
+    records: LookupMap<AccountId, Record>,
 }
 
 /// NEAR value of the curve between two supplies: `K * (hi² - lo²) / 2`.
@@ -203,6 +216,7 @@ impl Cabal {
             feed: LookupMap::new(b"f".to_vec()),
             chips: LookupMap::new(b"c".to_vec()),
             funded_by: LookupMap::new(b"u".to_vec()),
+            records: LookupMap::new(b"d".to_vec()),
         }
     }
 
@@ -322,7 +336,7 @@ impl Cabal {
         let cabal_wallet = r.seats[cabal_seat as usize].wallet.clone();
         for s in &sides {
             require!(
-                self.funded_by.get(&(round, s.clone())) == Some(&cabal_wallet),
+                self.traces_to(round, s, &cabal_wallet),
                 "a side wallet was never funded by the cabal wallet"
             );
         }
@@ -341,6 +355,16 @@ impl Cabal {
             } else {
                 lose_stake += a.stake.0;
             }
+            let mut rec = self.records.get(&a.who).cloned().unwrap_or_default();
+            rec.played += 1;
+            if a.seat == cabal_seat {
+                rec.caught += 1;
+                let t = a.at_ms.max(1);
+                if rec.best_ms == 0 || t < rec.best_ms {
+                    rec.best_ms = t;
+                }
+            }
+            self.records.insert(a.who.clone(), rec);
         }
 
         if win_stake == 0 {
@@ -475,7 +499,8 @@ impl Cabal {
             who != self.house && !r.funders.contains(&who) && !r.seats.iter().any(|s| s.wallet == who),
             "table wallets cannot accuse"
         );
-        r.accusers.push(Accuser { who: who.clone(), seat, stake: U128(stake) });
+        let at_ms = env::block_timestamp_ms().saturating_sub(r.opened_ms);
+        r.accusers.push(Accuser { who: who.clone(), seat, stake: U128(stake), at_ms });
         self.push(&mut r, Kind::Expose, who, None, seat as u64, stake, None);
         self.rounds.insert(round, r);
     }
@@ -522,6 +547,10 @@ impl Cabal {
         (start..end).filter_map(|i| self.feed.get(&(round, i)).cloned()).collect()
     }
 
+    pub fn record_of(&self, account_id: AccountId) -> Record {
+        self.records.get(&account_id).cloned().unwrap_or_default()
+    }
+
     pub fn chips_of(&self, round: u32, account_id: AccountId) -> u64 {
         self.chips.get(&(round, account_id)).copied().unwrap_or(0)
     }
@@ -550,6 +579,21 @@ impl Cabal {
     }
 
     // ───────────────────────── internals ─────────────────────────
+
+    /// True when `wallet`'s funding trail reaches `root` within three hops. Each hop is the *first* account that
+    /// funded the wallet through this contract, so a relay wallet or the exchange can launder the trail but not
+    /// break it, and an unrelated funder cannot hijack it.
+    fn traces_to(&self, round: u32, wallet: &AccountId, root: &AccountId) -> bool {
+        let mut cur = wallet.clone();
+        for _ in 0..3 {
+            match self.funded_by.get(&(round, cur.clone())) {
+                Some(f) if f == root => return true,
+                Some(f) => cur = f.clone(),
+                None => return false,
+            }
+        }
+        false
+    }
 
     fn round(&self, id: u32) -> RoundData {
         self.rounds.get(&id).cloned().expect("no such round")

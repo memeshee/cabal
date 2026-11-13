@@ -1,5 +1,7 @@
 // Mirrors the Rust house's JSON. Amounts that can exceed 2^53 (yoctoNEAR) stay strings.
 
+export type Tier = "rookie" | "hop" | "ghost";
+
 export type Phase = "dealing" | "playing" | "revealing" | "revealed" | "voided" | "failed";
 
 export interface Entry {
@@ -21,7 +23,7 @@ export interface Seat {
   color: string;
 }
 
-export interface Accuser { who: string; seat: number; stake: string }
+export interface Accuser { who: string; seat: number; stake: string; at_ms: number }
 
 export interface RoundView {
   id: number;
@@ -53,11 +55,19 @@ export interface ChatLine {
   text: string;
   kind: "kol" | "you" | "house";
   via: "NearAi" | "Llm" | "Scripted" | null;
+  /** Set when this is a caller's answer to one of the standard questions. */
+  claim_q: number | null;
+  claim_seat: number | null;
+  claim_tag: string | null;
+  /** Whether the claim was true. Null until the table is settled. */
+  claim_true: boolean | null;
 }
 
 export interface Dossier {
   wallet: string;
   funder_seat: number | null;
+  /** The caller at the end of the funding trail. Null while the table is live, and for laundered trails. */
+  root_seat: number | null;
   funder: string;
   funded_ms: number;
   funded_idx: number;
@@ -88,6 +98,8 @@ export interface TableView {
   phase: Phase;
   round: number | null;
   ticker: string;
+  tier: Tier;
+  players: number;
   demo: boolean;
   note: string;
   error: string | null;
@@ -116,8 +128,13 @@ export interface ActionResult {
   detail: unknown;
 }
 
+export interface DetectiveRecord { played: number; caught: number; best_ms: number }
+
+export interface LobbyRow { key: string; ticker: string; tier: Tier; elapsed_ms: number; players: number; demo: boolean }
+
 export interface Me {
   ok: boolean;
+  record: DetectiveRecord;
   account: string;
   balance_near: number;
   chips: number;

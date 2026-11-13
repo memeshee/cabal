@@ -1,7 +1,10 @@
 "use client";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { ensureGuest, newTable } from "@/lib/api";
+import { useEffect, useState } from "react";
+import { ensureGuest, getLobby, newTable } from "@/lib/api";
+import { loadProgress, suggestedTier, TIER_INFO, TIERS, type Progress } from "@/lib/progress";
+import type { LobbyRow, Tier } from "@/lib/types";
 import { Footer, Topbar } from "@/components/Shell";
 import { SampleBoard } from "@/components/SampleBoard";
 
@@ -9,13 +12,33 @@ export default function Home() {
   const router = useRouter();
   const [busy, setBusy] = useState<"play" | "demo" | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [tier, setTier] = useState<Tier>("rookie");
+  const [progress, setProgress] = useState<Progress>({ done: [], won: [] });
+  const [lobby, setLobby] = useState<LobbyRow[]>([]);
+
+  // Progress lives in the browser; offer the first tier the player has not yet won.
+  useEffect(() => {
+    const p = loadProgress();
+    setProgress(p);
+    setTier(suggestedTier(p));
+  }, []);
+  useEffect(() => {
+    let alive = true;
+    const load = () => getLobby().then((l) => alive && setLobby(l.tables)).catch(() => {});
+    load();
+    const t = setInterval(load, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, []);
 
   async function start(demo: boolean) {
     setBusy(demo ? "demo" : "play");
     setErr(null);
     try {
       await ensureGuest();
-      const key = await newTable(demo);
+      const key = await newTable(demo, tier);
       router.push(`/t/${key}`);
     } catch (e) {
       setErr((e as Error).message);
@@ -34,8 +57,16 @@ export default function Home() {
           <p className="lede">
             A three-minute memecoin game. Four callers hype the same coin. <b>One of them is the cabal</b>: they buy first through fresh wallets, then sell into everyone who followed their call. The chain shows who paid for those wallets. The callers will lie.
           </p>
+          <div className="tiers" role="radiogroup" aria-label="Difficulty">
+            {TIERS.map((t) => (
+              <button key={t} role="radio" aria-checked={tier === t} className={tier === t ? "on" : ""} onClick={() => setTier(t)}>
+                <div className="n">{TIER_INFO[t].name}{progress.won.includes(t) && <em>✓ SOLVED</em>}</div>
+                <div className="b">{TIER_INFO[t].blurb}</div>
+              </button>
+            ))}
+          </div>
           <div className="cta-row">
-            <button className="btn go big" onClick={() => start(false)} disabled={!!busy}>{busy === "play" ? "Dealing your table…" : "Take a seat"}</button>
+            <button className="btn go big" onClick={() => start(false)} disabled={!!busy}>{busy === "play" ? "Dealing your table…" : `Take a seat · ${TIER_INFO[tier].name}`}</button>
             <button className="btn big" onClick={() => start(true)} disabled={!!busy} title="Always deals the same table, so you can compare notes or follow the README">{busy === "demo" ? "Dealing…" : "Play the demo table"}</button>
           </div>
           <small>No wallet. No sign-up. You get play money on NEAR testnet.</small>
@@ -43,6 +74,20 @@ export default function Home() {
         </div>
         <SampleBoard />
       </section>
+
+      {lobby.length > 0 && (
+        <section className="lobby" aria-label="Tables in play">
+          <h4><span>Tables in play right now</span><span>join one and read the same board</span></h4>
+          {lobby.map((t) => (
+            <Link key={t.key} href={`/t/${t.key}`}>
+              <b>${t.ticker}</b>
+              <span className={`tier-badge ${t.tier}`}>{t.tier}</span>
+              <span className="dim">{Math.round(t.elapsed_ms / 1000)}s in{t.demo ? " · demo table" : ""}</span>
+              <span className="up">{t.players > 0 ? `${t.players} playing · join` : "join"}</span>
+            </Link>
+          ))}
+        </section>
+      )}
 
       <section className="claim" aria-label="Why this game">
         <div>

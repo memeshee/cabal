@@ -29,15 +29,15 @@ function scenario(): TableView {
     e(95, "Buy", "crowd1"), e(97, "Sell", "crowd2"),
   ];
   const d = (wallet: string, funder: string, funderSeat: number | null, funded: number): Dossier => ({
-    wallet, funder, funder_seat: funderSeat, funded_ms: OPEN + funded * 1000, funded_idx: 0,
+    wallet, funder, funder_seat: funderSeat, root_seat: null, funded_ms: OPEN + funded * 1000, funded_idx: 0,
     first_buy_ms: null, first_buy_idx: null, chips_bought: 0, first_sell_ms: null, chips_sold: 0, funder_call_ms: null, lead_ms: null, dumped_after_ms: null,
   });
   return {
-    key: "t", phase: "playing", round: 1, ticker: "FROG", demo: false, note: "", error: null, seats, labels: { exchange: "exchange" },
+    key: "t", phase: "playing", round: 1, ticker: "FROG", tier: "rookie", players: 1, demo: false, note: "", error: null, seats, labels: { exchange: "exchange" },
     round_view: { id: 1, ticker: "FROG", commitment: "c", seats: seats.map((s) => ({ handle: s.handle, wallet: s.wallet })), funders: ["exchange"], opened_ms: OPEN, closes_ms: OPEN + 180_000, reveal_by_ms: OPEN + 270_000, supply: 0, reserve: "0", bond: "0", price: "0", status: "Open", cabal_seat: null, sides: [], salt: null, accusers: [], feed_len: feed.length, pruned: 0, payout: "0" },
     feed, feed_total: feed.length, chat: [], chat_total: 0,
     dossiers: [d("whale", "exchange", null, 5), d("s1", "miraw", 1, 20), d("f1", "orenw", 3, 70)],
-    verdict: null, reveal: null, elapsed_ms: 100_000, play_ms: 180_000, reveal_ms: 90_000, contract: "c.testnet", explorer: "https://x",
+    verdict: null, reveal: null, elapsed_ms: 100_000, play_ms: 130_000, reveal_ms: 90_000, contract: "c.testnet", explorer: "https://x",
   };
 }
 
@@ -132,5 +132,18 @@ describe("formatters", () => {
     expect(offset(8_000)).toBe("+8s");
     expect(shortAcct("a".repeat(64))).toBe("aaaaa…aaaa");
     expect(shortAcct("kaito.testnet")).toBe("kaito.testnet");
+  });
+});
+
+describe("compact layout for phones", () => {
+  it("uses the room it has: a narrower label gutter and fewer ticks, never wider than the canvas", () => {
+    const v = scenario();
+    const wide = layoutBoard(v, 1000);
+    const small = layoutBoard(v, 560, null, true);
+    expect(small.padL).toBeLessThan(wide.padL);
+    expect(small.ticks.length).toBeLessThan(wide.ticks.length);
+    expect(small.xOf(OPEN + 130_000)).toBe(small.padL + small.innerW);
+    expect(small.padL + small.innerW + small.padR).toBe(560);
+    for (const r of small.rows) expect(r.fundedX).toBeLessThanOrEqual(560);
   });
 });

@@ -1,4 +1,4 @@
-import type { ActionResult, ChatLine, Me, TableView } from "./types";
+import type { ActionResult, ChatLine, LobbyRow, Me, Tier, TableView } from "./types";
 
 const TOKEN_KEY = "cabal.guest.v1";
 
@@ -41,8 +41,8 @@ export async function ensureGuest(): Promise<Guest> {
   return { token: j.token, account: j.account!, balance_near: j.balance_near ?? 0 };
 }
 
-export async function newTable(demo: boolean): Promise<string> {
-  const r = await fetch("/api/table", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ demo }) });
+export async function newTable(demo: boolean, tier: Tier = "rookie"): Promise<string> {
+  const r = await fetch("/api/table", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ demo, tier }) });
   const j = await json<{ ok: boolean; key?: string; error?: string }>(r);
   if (!j.ok || !j.key) throw new Error(j.error ?? "Could not open a table.");
   return j.key;
@@ -84,9 +84,9 @@ export const buy = (key: string, token: string, mnear: number) => act(key, "buy"
 export const sell = (key: string, token: string, pct: number) => act(key, "sell", { token, pct });
 export const expose = (key: string, token: string, seat: number, mnear: number) => act(key, "expose", { token, seat, mnear });
 
-export async function ask(key: string, token: string, seat: number, text: string): Promise<{ ok: boolean; lines?: ChatLine[]; error?: string }> {
+export async function ask(key: string, token: string, seat: number, text: string, q?: number): Promise<{ ok: boolean; lines?: ChatLine[]; error?: string }> {
   try {
-    const r = await fetch(`/api/table/${key}/ask`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token, seat, text }) });
+    const r = await fetch(`/api/table/${key}/ask`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token, seat, text, q }) });
     return await json(r);
   } catch (e) {
     return { ok: false, error: (e as Error).message };
@@ -97,4 +97,10 @@ export async function listRounds(): Promise<{ id: number; ticker: string; status
   const r = await fetch("/api/rounds", { cache: "no-store" });
   const j = await json<{ rounds?: { id: number; ticker: string; status: string; accusers: number; cabal: string | null }[] }>(r);
   return j.rounds ?? [];
+}
+
+export async function getLobby(): Promise<{ tables: LobbyRow[]; free_tables: number }> {
+  const r = await fetch("/api/lobby", { cache: "no-store" });
+  const j = await json<{ tables?: LobbyRow[]; free_tables?: number }>(r);
+  return { tables: j.tables ?? [], free_tables: j.free_tables ?? 0 };
 }

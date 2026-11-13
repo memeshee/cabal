@@ -14,7 +14,9 @@ use serde_json::{json, Value};
 use crate::{
     chain::YOCTO_PER_MNEAR,
     game::{now_ms, Game},
+    kols::QUESTIONS,
     model::{ActionResult, Phase},
+    plan::Tier,
 };
 
 type Ctx = Arc<Game>;
@@ -45,6 +47,8 @@ pub fn router(g: Ctx) -> Router {
         .route("/api/table/{key}/sell", post(sell))
         .route("/api/table/{key}/expose", post(expose))
         .route("/api/table/{key}/ask", post(ask))
+        .route("/api/lobby", get(lobby))
+        .route("/api/questions", get(questions))
         .route("/api/round/{id}", get(round))
         .route("/api/rounds", get(rounds))
         .with_state(g)
@@ -85,11 +89,18 @@ async fn guest(State(g): State<Ctx>, ConnectInfo(peer): ConnectInfo<SocketAddr>,
 struct NewTable {
     #[serde(default)]
     demo: bool,
+    /// "rookie" | "hop" | "ghost". Defaults to rookie.
+    #[serde(default)]
+    tier: Option<String>,
 }
 
 async fn new_table(State(g): State<Ctx>, ConnectInfo(peer): ConnectInfo<SocketAddr>, h: HeaderMap, Json(r): Json<NewTable>) -> Result<Json<Value>, Err> {
     let ip = client_ip(&h, peer);
-    match g.start_table(r.demo, &ip) {
+    let tier = match r.tier.as_deref() {
+        None | Some("") => Tier::Rookie,
+        Some(t) => Tier::parse(t).ok_or_else(|| err(StatusCode::BAD_REQUEST, "unknown difficulty"))?,
+    };
+    match g.start_table(tier, r.demo, &ip) {
         Ok(t) => Ok(Json(json!({ "ok": true, "key": t.key }))),
         Err(e) => Err(err(StatusCode::SERVICE_UNAVAILABLE, e.to_string())),
     }
@@ -116,6 +127,7 @@ struct Tok {
 async fn me(State(g): State<Ctx>, Path(key): Path<String>, Query(q): Query<Tok>) -> Result<Json<Value>, Err> {
     let t = g.table(&key).ok_or_else(|| err(StatusCode::NOT_FOUND, "no such table"))?;
     let who = g.parse_token(&q.token).ok_or_else(|| err(StatusCode::UNAUTHORIZED, "bad token"))?;
+    g.touch(&t, &who);
     let bal = g.chain.balance(&who).await;
     let v = g.table_view(&t, usize::MAX, usize::MAX);
     let (chips, mine) = match v.round {
@@ -130,7 +142,8 @@ async fn me(State(g): State<Ctx>, Path(key): Path<String>, Query(q): Query<Tok>)
         Some(round) if chips > 0 => g.chain.view::<String>("quote_sell", json!({ "round": round, "chips": chips })).await.unwrap_or_default(),
         _ => "0".into(),
     };
-    Ok(Json(json!({ "ok": true, "account": who, "balance_near": bal as f64 / (YOCTO_PER_MNEAR as f64 * 1000.0), "chips": chips, "chips_value": value, "accusation": mine })))
+    let record: Value = g.chain.view("record_of", json!({ "account_id": who })).await.unwrap_or(json!({ "played": 0, "caught": 0, "best_ms": 0 }));
+    Ok(Json(json!({ "ok": true, "account": who, "balance_near": bal as f64 / (YOCTO_PER_MNEAR as f64 * 1000.0), "chips": chips, "chips_value": value, "accusation": mine, "record": record })))
 }
 
 fn resolve(g: &Game, key: &str, token: &str) -> Result<(Arc<crate::game::Table>, near_api::types::AccountId), Err> {
@@ -177,15 +190,27 @@ async fn expose(State(g): State<Ctx>, Path(key): Path<String>, Json(r): Json<Exp
 struct AskReq {
     token: String,
     seat: usize,
+    /// One of the standard questions (0, 1, 2). Without it, `text` is free chat.
+    #[serde(default)]
+    q: Option<u8>,
+    #[serde(default)]
     text: String,
 }
 
 async fn ask(State(g): State<Ctx>, Path(key): Path<String>, Json(r): Json<AskReq>) -> Result<Json<Value>, Err> {
     let (t, who) = resolve(&g, &key, &r.token)?;
-    match g.player_ask(&t, &who, r.seat, &r.text).await {
+    match g.player_ask(&t, &who, r.seat, r.q, &r.text).await {
         Ok(lines) => Ok(Json(json!({ "ok": true, "lines": lines }))),
         Err(e) => Ok(Json(json!({ "ok": false, "error": e }))),
     }
+}
+
+async fn lobby(State(g): State<Ctx>) -> Json<Value> {
+    Json(json!({ "ok": true, "tables": g.lobby(), "free_tables": g.free_slots() }))
+}
+
+async fn questions() -> Json<Value> {
+    Json(json!({ "questions": QUESTIONS.iter().map(|q| json!({ "ask": q.ask, "short": q.short })).collect::<Vec<_>>() }))
 }
 
 async fn round(State(g): State<Ctx>, Path(id): Path<u32>) -> Result<Json<Value>, Err> {

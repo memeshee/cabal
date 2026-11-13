@@ -1,14 +1,30 @@
 "use client";
-import { useMemo } from "react";
-import { entryLabel, layoutBoard } from "@/lib/board";
+import { useEffect, useMemo, useState } from "react";
+import { claimHighlight, entryLabel, layoutBoard } from "@/lib/board";
 import type { TableView } from "@/lib/types";
 
 /** The evidence board. Time runs left to right; strings run from whoever paid for a wallet to that wallet. */
-export function Board({ view, selected, onSelect, final }: { view: TableView; selected: string | null; onSelect: (w: string | null) => void; final: boolean }) {
-  const L = useMemo(() => layoutBoard(view, 1000, view.elapsed_ms), [view]);
+export function Board({ view, selected, onSelect, final, focus }: { view: TableView; selected: string | null; onSelect: (w: string | null) => void; final: boolean; focus?: string | null }) {
+  // On a phone the same 1000-unit board shrinks to a third of its size and its labels become unreadable, so lay it
+  // out on a narrower canvas there: the text then renders at a legible size.
+  const [narrow, setNarrow] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 700px)");
+    const on = () => setNarrow(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  const L = useMemo(() => layoutBoard(view, narrow ? 560 : 1000, view.elapsed_ms, narrow), [view, narrow]);
   const cabalSeat = view.reveal?.cabal_seat ?? null;
   const sideSet = useMemo(() => new Set(view.reveal?.sides ?? []), [view.reveal]);
   const nSeats = view.seats.length;
+  // A claim chip in the room lights the wallets it is about. Neutral: it shows the relation, never a verdict.
+  const lit = useMemo(() => {
+    if (!focus) return null;
+    const [seat, q] = focus.split(":").map(Number);
+    return { seat, q, wallets: claimHighlight(view, seat, q) };
+  }, [focus, view]);
 
   return (
     <div className="panel board">
@@ -61,6 +77,15 @@ export function Board({ view, selected, onSelect, final }: { view: TableView; se
           );
         })}
 
+        {/* callers paying the exchange: the Ghost tier's noise */}
+        {L.laneLinks.map((l, i) => (
+          <g key={`ll${i}`} className={lit ? "dim" : ""}>
+            <line x1={l.x} x2={l.x} y1={l.fromY} y2={l.toY} stroke={view.seats[l.seat].color} strokeWidth="1.4" strokeDasharray="3 3" opacity="0.8" />
+            <circle cx={l.x} cy={l.fromY} r="3.5" fill={view.seats[l.seat].color} />
+            <circle cx={l.x} cy={l.toY} r="3.5" fill="none" stroke={view.seats[l.seat].color} strokeWidth="1.4" />
+          </g>
+        ))}
+
         {/* wallet rows: string from the payer, then buy / sell marks */}
         {L.rows.map((r, i) => {
           const isSelected = selected === r.wallet;
@@ -68,7 +93,7 @@ export function Board({ view, selected, onSelect, final }: { view: TableView; se
           const revealedSide = final && sideSet.has(r.wallet);
           const lab = entryLabel(view, r.dossier.funder).text;
           return (
-            <g key={r.wallet} className={`wallet-hit ${revealedSide ? "side" : ""} ${isSelected ? "sel" : ""}`} onClick={() => onSelect(isSelected ? null : r.wallet)} tabIndex={0} role="button" aria-label={`Wallet ${r.wallet.slice(0, 6)} funded by ${lab}`} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onSelect(isSelected ? null : r.wallet)}>
+            <g key={r.wallet} className={`wallet-hit ${revealedSide ? "side" : ""} ${isSelected ? "sel" : ""} ${lit ? (lit.wallets.has(r.wallet) ? "lit" : "dim") : ""}`} onClick={() => onSelect(isSelected ? null : r.wallet)} tabIndex={0} role="button" aria-label={`Wallet ${r.wallet.slice(0, 6)} funded by ${lab}`} onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onSelect(isSelected ? null : r.wallet)}>
               <rect x={0} y={r.y - 14} width={L.width} height={28} fill="transparent" />
               {/* span line */}
               {r.spanX && <line x1={r.spanX[0]} x2={r.spanX[1]} y1={r.y} y2={r.y} stroke={kolColor} strokeOpacity={0.35} strokeWidth="1" />}
@@ -109,7 +134,7 @@ export function Board({ view, selected, onSelect, final }: { view: TableView; se
         {L.nowX !== null && !final && <line x1={L.nowX} x2={L.nowX} y1={4} y2={L.height - 40} stroke="#f2c230" strokeWidth="1.5" />}
       </svg>
       <div className="legend">
-        <span><i />paid for by a caller</span>
+        <span><i />paid for by a caller or a relay</span>
         <span><i className="b" />paid for by the exchange</span>
         <span><s />bought</span>
         <span><s className="sl" />sold</span>

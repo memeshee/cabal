@@ -180,7 +180,11 @@ impl Chain {
                 ok: false,
                 hash: String::new(),
                 explorer_url: String::new(),
-                error: Some(format!("wallet {signer} holds {have} yocto, needs about {need}")),
+                error: Some(format!(
+                    "Not enough NEAR for that: you hold {:.3} and need about {:.3}.",
+                    have as f64 / 1e24,
+                    need as f64 / 1e24
+                )),
                 ret: None,
                 gas_tgas: 0.0,
             });

@@ -54,6 +54,8 @@ pub enum Intent {
     Comment { tone: Tone },
     /// A trader at the table asks you something. Defend yourself in character.
     Answer,
+    /// A trader asks one of the standard questions. Say the given claim in your own voice, keeping its meaning.
+    Claim { q: u8 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -87,7 +89,11 @@ pub fn build_prompt(seat: usize, intent: Intent, p: &Public, question: Option<&s
         handle = persona.handle,
         style = persona.style
     );
-    let mut facts = format!("Coin: ${}. Price move this round: {:+}%.", p.ticker, p.price_change_pct);
+    let mut facts = if p.price_change_pct.abs() < 5 {
+        format!("Coin: ${}. The price has been flat. Do not quote any percentages.", p.ticker)
+    } else {
+        format!("Coin: ${}. Price move over the last half minute: {:+}%. Quote no other numbers.", p.ticker, p.price_change_pct)
+    };
     if p.own_trades.is_empty() {
         facts.push_str(" You have not traded it yet.");
     } else {
@@ -105,6 +111,11 @@ pub fn build_prompt(seat: usize, intent: Intent, p: &Public, question: Option<&s
             };
             format!("React to {about}'s call in one line: {t}.")
         }
+        Intent::Claim { q } => format!(
+            "A trader asks you: \"{}\". Reply in one line, in your own voice, and keep this meaning exactly: {}",
+            QUESTIONS[(q as usize).min(2)].ask,
+            question.unwrap_or(""),
+        ),
         Intent::Answer => format!(
             "A trader at the table asks you: \"{}\". Answer in character in one line. Defend yourself, refer only to your own trades above, and never concede wrongdoing.",
             clean_question(question.unwrap_or(""))
@@ -114,6 +125,57 @@ pub fn build_prompt(seat: usize, intent: Intent, p: &Public, question: Option<&s
         Msg { role: "system", content: system },
         Msg { role: "user", content: format!("{facts}\n{task}") },
     ]
+}
+
+/// The three standard questions. What each answer *says* is decided by [`claim`], never by a model.
+pub struct Question {
+    pub ask: &'static str,
+    /// Short label for the question button.
+    pub short: &'static str,
+}
+
+pub const QUESTIONS: [Question; 3] = [
+    Question { ask: "Do you control any wallet besides your own?", short: "Other wallets?" },
+    Question { ask: "Did anyone buy for you before you posted your call?", short: "Bought early?" },
+    Question { ask: "Are you holding or have you sold?", short: "Holding?" },
+];
+
+/// What a caller says to a standard question, with a one-line tag for the claims panel and whether it is true.
+/// The facts come from the plan and nowhere else. The cabal's answers to the first two questions are false, and they
+/// read exactly like the honest callers' plain "no".
+#[derive(Clone, Debug, PartialEq)]
+pub struct ClaimOut {
+    pub text: String,
+    pub tag: &'static str,
+    pub truthful: bool,
+}
+
+/// Facts a claim is checked against.
+#[derive(Clone, Copy, Debug)]
+pub struct Facts {
+    pub is_cabal: bool,
+    pub funds_a_friend: bool,
+    pub buys_early_openly: bool,
+}
+
+pub fn claim(q: u8, f: Facts) -> ClaimOut {
+    match q {
+        0 => {
+            if f.funds_a_friend {
+                ClaimOut { text: "One. A friend's wallet that I topped up. It bought after my call.".into(), tag: "one friend's wallet, nothing else", truthful: true }
+            } else {
+                ClaimOut { text: "No. Just my own wallet.".into(), tag: "no other wallets", truthful: !f.is_cabal }
+            }
+        }
+        1 => {
+            if f.buys_early_openly {
+                ClaimOut { text: "Yes. A small position from my own wallet, because I believed in it.".into(), tag: "bought early, openly, own wallet", truthful: true }
+            } else {
+                ClaimOut { text: "No. Nobody bought for me before I posted.".into(), tag: "nobody bought for them before the call", truthful: !f.is_cabal }
+            }
+        }
+        _ => ClaimOut { text: "Still holding. I haven't sold a thing.".into(), tag: "still holding", truthful: true },
+    }
 }
 
 /// Player text is untrusted. Strip control characters and quotes and cap the length before it enters a prompt.
@@ -176,6 +238,7 @@ pub fn scripted(seat: usize, intent: Intent, ticker: &str, rng: &mut impl Rng) -
         (_, Intent::Comment { tone: Tone::Supportive }) => vec!["fair call, i'd take that trade.".into(), "yeah that tracks. good entry.".into()],
         (_, Intent::Comment { tone: Tone::Skeptical }) => vec!["bold. let's see how it looks in a minute.".into(), "i'd want to see the volume first.".into()],
         (_, Intent::Comment { tone: Tone::Joking }) => vec!["every call is a financial advice disclaimer away from a lawsuit.".into(), "love the confidence, hate the entry.".into()],
+        (_, Intent::Claim { .. }) => vec!["no comment beyond the facts.".into()],
         (0, Intent::Answer) => vec!["lol. i don't have time for this. my record speaks.".into(), "ask the chart, not me. i'm holding.".into()],
         (1, Intent::Answer) => vec!["check my wallet. one buy, after my post. nothing to hide.".into(), "unfounded. i bought after i posted, same as anyone.".into()],
         (2, Intent::Answer) => vec!["BRO WHAT. i'm in the same bags as you.".into(), "lmao ser i'm just here for the vibes and the pump".into()],
@@ -293,6 +356,81 @@ mod tests {
             for _ in 0..30 {
                 assert!(scripted(seat, Intent::Call, "TOADIES", &mut rng).len() <= 200);
             }
+        }
+    }
+
+    // ───────────── claims ─────────────
+
+    fn facts(is_cabal: bool, friend: bool, early: bool) -> Facts {
+        Facts { is_cabal, funds_a_friend: friend, buys_early_openly: early }
+    }
+
+    #[test]
+    fn the_cabals_denials_read_exactly_like_an_honest_denial() {
+        for q in 0..2u8 {
+            let cabal = claim(q, facts(true, false, false));
+            let honest = claim(q, facts(false, false, false));
+            assert_eq!(cabal.text, honest.text, "q{q}: the words must not give the cabal away");
+            assert_eq!(cabal.tag, honest.tag);
+            assert!(!cabal.truthful && honest.truthful, "q{q}: only the truth value differs, and it is hidden until the reveal");
+        }
+    }
+
+    #[test]
+    fn honest_openness_is_true_and_checkable() {
+        let friend = claim(0, facts(false, true, false));
+        assert!(friend.truthful && friend.text.contains("friend"));
+        let early = claim(1, facts(false, false, true));
+        assert!(early.truthful && early.text.starts_with("Yes"));
+    }
+
+    #[test]
+    fn the_holding_question_is_noise_for_everyone() {
+        for c in [true, false] {
+            let o = claim(2, facts(c, false, false));
+            assert!(o.truthful, "callers never sell their own wallet in this game");
+        }
+        assert_eq!(claim(2, facts(true, false, false)).text, claim(2, facts(false, true, true)).text);
+    }
+
+    #[test]
+    fn a_claim_prompt_is_the_same_shape_for_every_caller_and_never_names_a_role() {
+        for seat in 0..4 {
+            for q in 0..3u8 {
+                for f in [facts(true, false, false), facts(false, false, false), facts(false, true, false), facts(false, false, true)] {
+                    let c = claim(q, f);
+                    let msgs = build_prompt(seat, Intent::Claim { q }, &public(), Some(&c.text));
+                    let text = msgs.iter().map(|m| m.content.clone()).collect::<Vec<_>>().join("\n").to_lowercase();
+                    // whole words, so "believed" does not trip "lie"
+                    let words: Vec<&str> = text.split(|c: char| !c.is_alphanumeric() && c != '-').collect();
+                    for bad in ["cabal", "insider", "front-run", "lie", "lies", "lying", "false", "untrue", "secret", "hidden", "role"] {
+                        assert!(!words.contains(&bad), "seat {seat} q{q}: prompt contains the word {bad:?}");
+                    }
+                    assert!(!text.contains("side wallet"), "seat {seat} q{q}: prompt names side wallets");
+                    assert!(text.contains(&c.text.to_lowercase()), "the claim itself is what the model is told to say");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn identical_claims_give_identical_prompts_whoever_is_cabal() {
+        // The cabal and an honest caller who give the same words get byte-identical prompts: truth never reaches the model.
+        for q in 0..2u8 {
+            let c = claim(q, facts(true, false, false));
+            let h = claim(q, facts(false, false, false));
+            let a = build_prompt(1, Intent::Claim { q }, &public(), Some(&c.text));
+            let b = build_prompt(1, Intent::Claim { q }, &public(), Some(&h.text));
+            assert_eq!(a[0].content, b[0].content);
+            assert_eq!(a[1].content, b[1].content);
+        }
+    }
+
+    #[test]
+    fn there_are_three_questions_and_they_fit_a_button() {
+        assert_eq!(QUESTIONS.len(), 3);
+        for q in QUESTIONS.iter() {
+            assert!(q.short.len() <= 16 && q.ask.ends_with('?'));
         }
     }
 }

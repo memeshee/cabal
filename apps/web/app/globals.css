@@ -300,3 +300,69 @@ button { font: inherit; color: inherit; }
   *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
   .board .string { stroke-dashoffset: 0; }
 }
+
+
+/* ───────── claims, questions, lit board ───────── */
+.board .wallet-hit.dim { opacity: 0.28; transition: opacity 0.2s; }
+.board .wallet-hit.lit .wallet-dot { stroke: var(--hi); stroke-width: 3; }
+.board .wallet-hit.lit text { fill: var(--hi); }
+.claim { display: inline-flex; gap: 8px; align-items: baseline; margin-top: 6px; padding: 3px 8px; border: 1px dashed var(--paper-faint); background: transparent; cursor: pointer; font-family: var(--f-mono); font-size: 11px; color: var(--paper-dim); border-radius: 2px; text-align: left; }
+.claim .mark { font-weight: 700; letter-spacing: 0.08em; color: var(--hi); }
+.claim:hover { border-color: var(--hi); color: var(--paper); }
+.claim.on { border-style: solid; border-color: var(--hi); background: rgba(242, 194, 48, 0.1); color: var(--paper); }
+.claim.true { border-color: var(--green); } .claim.true .mark { color: var(--green); }
+.claim.false { border-color: var(--red); background: rgba(229, 64, 42, 0.12); } .claim.false .mark { color: var(--red); }
+.asks { border-top: 1px solid var(--rule); }
+.asks .who { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--rule-soft); }
+.asks .who button { background: transparent; border: none; border-right: 1px solid var(--rule-soft); padding: 8px 2px; cursor: pointer; font-family: var(--f-mono); font-size: 12px; color: var(--paper-dim); border-bottom: 2px solid transparent; }
+.asks .who button:last-child { border-right: none; }
+.asks .who button.on { font-weight: 700; border-bottom: 2px solid currentColor; }
+.asks .qs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 10px 14px 4px; }
+.asks .askrow { border-top: none; padding-top: 6px; }
+
+/* ───────── autopsy, share, presence, tiers ───────── */
+.autopsy .lead { font-family: var(--f-display); text-transform: uppercase; font-size: 24px; line-height: 1.05; margin: 0 0 8px; letter-spacing: 0.02em; }
+table.tell { width: 100%; border-collapse: collapse; font-size: 12.5px; margin-bottom: 10px; }
+table.tell th { text-align: left; font-family: var(--f-mono); font-weight: 500; font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--paper-faint); padding: 4px 8px 6px 0; border-bottom: 1px solid var(--rule); }
+table.tell td { padding: 6px 8px 6px 0; border-bottom: 1px dashed var(--rule-soft); }
+ul.clues { margin: 0; padding-left: 18px; color: var(--paper-dim); font-size: 13.5px; }
+ul.clues li { margin: 3px 0; }
+.tier-badge { font-family: var(--f-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; border: 1px solid var(--rule); padding: 3px 8px; color: var(--paper-dim); }
+.tier-badge.rookie { color: var(--green); border-color: rgba(79, 209, 139, 0.5); }
+.tier-badge.hop { color: var(--blue); border-color: rgba(88, 182, 201, 0.5); }
+.tier-badge.ghost { color: var(--red); border-color: rgba(229, 64, 42, 0.5); }
+.presence { font-family: var(--f-mono); font-size: 12px; color: var(--paper-dim); display: inline-flex; gap: 6px; align-items: center; }
+.presence i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.35; } }
+.tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; border: 1px solid var(--rule); margin: 22px 0 6px; }
+.tiers button { text-align: left; background: transparent; border: none; border-right: 1px solid var(--rule); padding: 14px 16px; cursor: pointer; color: var(--paper-dim); }
+.tiers button:last-child { border-right: none; }
+.tiers button:hover { background: var(--ink-2); color: var(--paper); }
+.tiers button.on { background: var(--ink-2); box-shadow: inset 0 -3px 0 var(--hi); color: var(--paper); }
+.tiers .n { font-family: var(--f-display); text-transform: uppercase; font-size: 24px; letter-spacing: 0.04em; display: flex; justify-content: space-between; align-items: baseline; }
+.tiers .n em { font-style: normal; font-family: var(--f-mono); font-size: 10.5px; letter-spacing: 0.1em; color: var(--green); }
+.tiers .b { font-size: 12.5px; line-height: 1.35; margin-top: 4px; }
+.lobby { border: 1px solid var(--rule); margin: 8px 0 28px; }
+.lobby h4 { margin: 0; padding: 9px 14px; font-family: var(--f-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--paper-faint); border-bottom: 1px solid var(--rule); display: flex; justify-content: space-between; }
+.lobby a { display: grid; grid-template-columns: 80px 90px 1fr auto; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--rule-soft); text-decoration: none; font-family: var(--f-mono); font-size: 12.5px; align-items: center; }
+.lobby a:last-child { border-bottom: none; }
+.lobby a:hover { background: var(--ink-2); }
+.record { font-family: var(--f-mono); font-size: 11.5px; color: var(--paper-dim); }
+.record b { color: var(--paper); }
+@media (max-width: 700px) { .tiers { grid-template-columns: 1fr; } .tiers button { border-right: none; border-bottom: 1px solid var(--rule); } .lobby a { grid-template-columns: 60px 1fr auto; } .lobby a span:nth-child(2) { display: none; } }
+
+.primer { display: grid; gap: 10px; max-width: 560px; margin: 26px auto 0; text-align: left; }
+.primer div { display: grid; grid-template-columns: 34px 1fr; gap: 12px; align-items: baseline; border-top: 1px solid var(--rule-soft); padding-top: 10px; }
+.primer b { font-family: var(--f-display); font-size: 34px; color: var(--hi); line-height: 1; }
+.primer span { color: var(--paper-dim); font-size: 15px; }
+.primer em { color: var(--red); font-style: normal; font-weight: 600; }
+@media (max-width: 700px) {
+  .board .lane-label { font-size: 17px; }
+  .board .axis { font-size: 13px; }
+  .board .lane-sub { font-size: 12px; }
+  .asks .who button { font-size: 11px; }
+}
+
+.standings { display: grid; gap: 2px; }
+.standings .row { display: grid; grid-template-columns: 24px 1fr 70px 64px; gap: 8px; padding: 4px 0; border-bottom: 1px dashed var(--rule-soft); font-size: 12.5px; }
+.standings .row.me { background: rgba(242, 194, 48, 0.08); }

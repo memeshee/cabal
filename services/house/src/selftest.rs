@@ -22,14 +22,15 @@ fn near(y: u128) -> f64 {
 
 pub async fn run(g: Arc<Game>) -> Result<()> {
     let demo = std::env::args().any(|a| a == "--demo");
+    let tier = std::env::args().skip_while(|a| a != "--tier").nth(1).and_then(|t| crate::plan::Tier::parse(&t)).unwrap_or(crate::plan::Tier::Rookie);
     let (tok_a, a, _) = g.guest(None, "selftest").await?;
     let (_tok_b, b, _) = g.guest(None, "selftest").await?;
     println!("guest A {}…  guest B {}…", &a.as_str()[..8], &b.as_str()[..8]);
     let bal_a0 = g.chain.balance(&a).await;
     let bal_b0 = g.chain.balance(&b).await;
 
-    let t = g.start_table(demo, "selftest")?;
-    println!("table {} dealing (demo={demo})", t.key);
+    let t = g.start_table(tier, demo, "selftest")?;
+    println!("table {} dealing (tier={tier:?} demo={demo})", t.key);
     let started = Instant::now();
     loop {
         let v = g.table_view(&t, 0, 0);
@@ -55,6 +56,7 @@ pub async fn run(g: Arc<Game>) -> Result<()> {
     let mut suspect: Option<usize> = None;
     let mut decoy: usize = 0;
     let mut accused_at = 0u64;
+    let mut traded = false;
     while started.elapsed() < Duration::from_secs(230) {
         sleep(Duration::from_secs(2)).await;
         let v = g.table_view_full(&t, 0, 0);
@@ -79,7 +81,8 @@ pub async fn run(g: Arc<Game>) -> Result<()> {
             }
         }
         // Let A trade as well, to exercise the player path.
-        if suspect.is_none() && v.elapsed_ms.unwrap_or(0) > 20_000 && v.feed_total > 4 {
+        if !traded && suspect.is_none() && v.elapsed_ms.unwrap_or(0) > 20_000 && v.feed_total > 4 {
+            traded = true;
             let _ = g.player_buy(&t, &a, 20).await;
         }
     }
