@@ -74,7 +74,7 @@ These are exact steps with the expected result.
 3. In **The room**, pick `@mira` and press **Other wallets?**.
    *Expected:* she answers in her own voice and a claim chip appears: "claims: no other wallets". Click the chip: the board lights her three wallets and dims the rest. That contradicts her claim.
 4. Click one of those wallet rows (or a wallet name in **The tape**).
-   *Expected:* a **Wallet file** showing "paid for by @mira", a buy about 10s before her call and a sell about 8s after it.
+   *Expected:* a **Wallet file** showing "paid for by @mira", a buy 9 to 13s before her call and a sell 7 to 13s after it (depending on the wallet).
 5. Press **Expose** next to `@mira` and confirm the stake.
    *Expected:* a toast "You accused @mira" with a link to the transaction.
 6. Wait for the clock to run out.

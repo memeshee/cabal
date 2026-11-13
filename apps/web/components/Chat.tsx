@@ -66,8 +66,11 @@ export function Chat({
                 {c.kind === "house" ? "THE HOUSE" : c.who}
               </div>
               <p>{c.text}</p>
+              {key && c.claim_tag && on && (
+                <button className="claim-clear" onClick={() => onFocus(null)} aria-label="Stop highlighting this claim on the board">clear</button>
+              )}
               {key && c.claim_tag && (
-                <button className={`claim ${on ? "on" : ""} ${c.claim_true === true ? "true" : c.claim_true === false ? "false" : ""}`} onClick={() => onFocus(on ? null : key)} aria-pressed={on}>
+                <button className={`claim ${on ? "on" : ""} ${c.claim_true === true ? "true" : c.claim_true === false ? "false" : ""}`} onClick={() => onFocus(key)} aria-pressed={on} title={on ? "Showing on the board" : "Show what this is about on the board"}>
                   <span className="mark">{c.claim_true === true ? "✓ TRUE" : c.claim_true === false ? "✗ FALSE" : on ? "CHECKING" : "CHECK"}</span>
                   <span>claims: {c.claim_tag}</span>
                 </button>

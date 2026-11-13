@@ -17,6 +17,27 @@ function setToken(t: string) {
   }
 }
 
+/** True for the browser's own "could not reach the server" failures, as opposed to the house answering with a refusal. */
+export function isNetworkError(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e);
+  return e instanceof TypeError || /failed to fetch|networkerror|load failed|network request failed/i.test(m);
+}
+
+/** fetch with a short retry on network failures only. A refusal from the house (a 4xx/5xx with a message) is returned as is. */
+export async function resilientFetch(input: RequestInfo, init?: RequestInit, tries = 3): Promise<Response> {
+  let last: unknown;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fetch(input, init);
+    } catch (e) {
+      last = e;
+      if (!isNetworkError(e)) throw e;
+      await new Promise((r) => setTimeout(r, 600 * (i + 1)));
+    }
+  }
+  throw new Error("Can't reach the game server right now. Check your connection and try again.");
+}
+
 async function json<T>(r: Response): Promise<T> {
   const text = await r.text();
   try {
@@ -30,7 +51,7 @@ export interface Guest { token: string; account: string; balance_near: number }
 
 /** Get (or restore) this visitor's throwaway testnet account. */
 export async function ensureGuest(): Promise<Guest> {
-  const r = await fetch("/api/guest", {
+  const r = await resilientFetch("/api/guest", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ token: getToken() }),
@@ -42,7 +63,7 @@ export async function ensureGuest(): Promise<Guest> {
 }
 
 export async function newTable(demo: boolean, tier: Tier = "rookie"): Promise<string> {
-  const r = await fetch("/api/table", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ demo, tier }) });
+  const r = await resilientFetch("/api/table", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ demo, tier }) });
   const j = await json<{ ok: boolean; key?: string; error?: string }>(r);
   if (!j.ok || !j.key) throw new Error(j.error ?? "Could not open a table.");
   return j.key;
