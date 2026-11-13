@@ -41,6 +41,8 @@ const TICKERS: [&str; 10] = ["FROG", "TOAD", "MOON", "NEKO", "GIGA", "SMOL", "WO
 // Warm-up targets come from the plan, which proves in a test that no wallet is asked for more than it holds.
 /// A wallet is refilled whenever it holds less than this share of its target.
 const REFILL_BELOW_PCT: u128 = 85;
+/// A wallet holding more than this share of its target (and 0.1 NEAR more in absolute terms) is trimmed back to target.
+const TRIM_ABOVE_PCT: u128 = 150;
 
 pub struct Wallets {
     pub kols: Vec<AccountId>,
@@ -434,6 +436,10 @@ impl Game {
         let g = self.clone();
         let slot = t.slot;
         tokio::spawn(async move {
+            let back = g.trim_slot(slot).await;
+            if back > 0 {
+                tracing::info!(slot, returned_near = back as f64 / 1e24, "trimmed surplus back to the house");
+            }
             g.warm_slot(slot).await;
         });
     }
@@ -507,6 +513,33 @@ impl Game {
                 }
             }
         }
+    }
+
+    /// Return surplus to the house. Copy-traders sell into a rising curve, so over many tables their wallets net-gain
+    /// NEAR; without this the house slowly drains into wallets that already hold more than they will ever spend.
+    pub async fn trim_slot(&self, slot: usize) -> u128 {
+        let w = self.slot_wallets(slot);
+        let mut all: Vec<(AccountId, u64)> = vec![];
+        all.extend(w.kols.iter().map(|a| (a.clone(), plan::BUDGET_KOL)));
+        all.extend(w.crowd.iter().map(|a| (a.clone(), plan::BUDGET_CROWD)));
+        all.push((w.exchange.clone(), plan::BUDGET_EXCHANGE));
+        all.push((w.whale.clone(), plan::BUDGET_WHALE));
+        all.push((w.friend.clone(), plan::BUDGET_FRIEND));
+        all.push((w.decoy.clone(), plan::BUDGET_DECOY));
+        all.push((w.relay.clone(), plan::BUDGET_RELAY));
+        let mut returned = 0u128;
+        for (acct, target) in all {
+            let bal = self.chain.balance(&acct).await;
+            let keep = mnear(target) * TRIM_ABOVE_PCT / 100;
+            if bal > keep + mnear(100) {
+                let give = bal - mnear(target);
+                match self.chain.transfer(&acct, &self.chain.house, give).await {
+                    Ok(_) => returned += give,
+                    Err(e) => tracing::warn!("trim from {acct} failed: {e}"),
+                }
+            }
+        }
+        returned
     }
 
     /// Keep the contract's balance above its storage cost, and free storage held by old rounds.
