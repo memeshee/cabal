@@ -1,0 +1,11 @@
+.git
+target
+node_modules
+**/node_modules
+**/.next
+data
+docs/screenshots
+.env
+.env.*
+!.env.example
+*.log

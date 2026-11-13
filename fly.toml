@@ -1,0 +1,43 @@
+# CABAL on Fly.io (house + web in one machine, scales to zero).
+# Secrets are set with `fly secrets set` and are never in this file:
+#   HOUSE_SECRET_KEY, NEAR_AI_API_KEY, and optionally LLM_BASE_URL / LLM_API_KEY / LLM_MODEL
+app = "cabal-near"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NEAR_NETWORK = "testnet"
+  CABAL_CONTRACT = "cabal-game-bfbf.testnet"
+  HOUSE_ACCOUNT = "cabal-house-bfbf.testnet"
+  SLOTS = "3"
+  DATA_DIR = "/data"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+# Only used to finish a table if the machine restarts mid-game. The chain is the source of truth for everything else.
+[mounts]
+  source = "cabal_data"
+  destination = "/data"
+
+# Scale to zero when idle. The public port opens only after the house answers, and the web app retries while waking.
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 40
+    hard_limit = 80
+
+  [[http_service.checks]]
+    grace_period = "40s"
+    interval = "30s"
+    method = "GET"
+    path = "/api/health"
+    timeout = "10s"
