@@ -100,6 +100,17 @@ describe("the autopsy", () => {
     expect(a.clues[0]).toContain("noise");
   });
 
+  it("does not tell a Ghost player to check funding against a claim", () => {
+    const v = view("ghost");
+    v.chat = [{ id: 0, ts_ms: 0, who: "@mira", text: "No.", kind: "kol", via: null, claim_q: 0, claim_seat: 1, claim_tag: "no other wallets", claim_true: false }];
+    const clues = autopsy(v)!.clues.join(" ");
+    expect(clues).toContain("Only the timing could");
+    expect(clues).not.toContain("who they paid");
+    const r = view("rookie");
+    r.chat = v.chat;
+    expect(autopsy(r)!.clues.join(" ")).toContain("who they paid");
+  });
+
   it("walks a trail back to the caller and stops there", () => {
     expect(trailOf(view("rookie"), "s1")).toEqual(["@mira"]);
     expect(trailOf(view("hop"), "s2")).toEqual(["relay", "@mira"]);

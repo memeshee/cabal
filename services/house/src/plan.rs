@@ -725,6 +725,21 @@ mod tests {
     }
 
     #[test]
+    fn the_pinned_demo_tables_are_what_the_walkthrough_says() {
+        // The README walks a judge through the demo table: @mira is the cabal on every tier, @dex calls first, and the
+        // honest friend wallet belongs to @oren. If this fails, update the walkthrough before updating this test.
+        for tier in Tier::ALL {
+            let p = plan(demo_seed(tier), tier);
+            assert_eq!(p.cabal, 1, "{tier:?}: @mira is the cabal");
+            assert_eq!(p.call_order, vec![2, 1, 0, 3], "{tier:?}: @dex, @mira, @kaito, @oren");
+            assert_eq!(p.friend_of, 3, "{tier:?}: the friend wallet is @oren's");
+            if tier.has_decoys() {
+                assert_eq!((p.conviction, p.decoy_for), (Some(0), Some(2)), "{tier:?}: @kaito buys early openly; the decoy runs ahead of @dex's call");
+            }
+        }
+    }
+
+    #[test]
     fn demo_label_is_stable() {
         assert_eq!(seed_from_label("demo"), seed_from_label("demo"));
         assert_ne!(seed_from_label("demo"), seed_from_label("other"));

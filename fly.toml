@@ -9,7 +9,7 @@ primary_region = "iad"
 
 [env]
   NEAR_NETWORK = "testnet"
-  CABAL_CONTRACT = "cabal-game-bfbf.testnet"
+  CABAL_CONTRACT = "game2.cabal-house-bfbf.testnet"
   HOUSE_ACCOUNT = "cabal-house-bfbf.testnet"
   SLOTS = "3"
   # Spending limits sized to the house balance: a guest keeps its grant, tables are mostly recycled.

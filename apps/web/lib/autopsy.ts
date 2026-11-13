@@ -83,7 +83,13 @@ export function autopsy(v: TableView): Autopsy | null {
   if (tier !== "ghost") clues.push(`Follow the strings back: the trail ends at ${r.cabal_handle}.`);
   else clues.push("Funding was noise. Look for fresh wallets that bought just before one call and dumped right after it.");
   clues.push("A wallet that bought before a call and sold into the crowd after it is front-running that call.");
-  if (v.chat.some((c) => c.claim_true === false)) clues.push("A claim that the chain contradicted. Check what they said against who they paid.");
+  if (v.chat.some((c) => c.claim_true === false)) {
+    clues.push(
+      tier === "ghost"
+        ? `${r.cabal_handle}'s "no other wallets" was false, but on Ghost the funding cannot show it. Only the timing could.`
+        : "A claim that the chain contradicted. Check what they said against who they paid.",
+    );
+  }
   return { cabal: r.cabal_handle, callAtMs: callAt, rows, headline, tactic, clues };
 }
 

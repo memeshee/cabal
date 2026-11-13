@@ -35,6 +35,26 @@ pub struct AccuserV {
     pub who: String,
     pub seat: u8,
     pub stake: String,
+    /// Milliseconds after the table opened that the accusation was filed.
+    #[serde(default)]
+    pub at_ms: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_accuser_keeps_the_time_the_contract_recorded() {
+        // Regression: the field was dropped on the way through, so every accusation looked instantaneous.
+        let a: AccuserV = serde_json::from_str(r#"{"who":"a.testnet","seat":1,"stake":"50000000000000000000000","at_ms":63977}"#).unwrap();
+        assert_eq!(a.at_ms, 63977);
+        let out = serde_json::to_value(&a).unwrap();
+        assert_eq!(out["at_ms"], 63977);
+        // an accuser from before the field existed still parses
+        let old: AccuserV = serde_json::from_str(r#"{"who":"a.testnet","seat":1,"stake":"1"}"#).unwrap();
+        assert_eq!(old.at_ms, 0);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]

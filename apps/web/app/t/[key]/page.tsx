@@ -222,7 +222,7 @@ function Live({ tableKey }: { tableKey: string }) {
           <Suspects view={view} token={token} me={me} live={live} onToast={onToast} />
           {me?.record && me.record.played > 0 && (
             <div className="record" aria-label="Your detective record">
-              Detective record: <b>{me.record.caught}</b> caught in <b>{me.record.played}</b> tables{me.record.best_ms > 0 && <> · fastest <b>{Math.round(me.record.best_ms / 1000)}s</b></>}
+              Detective record: <b>{me.record.caught}</b> caught in <b>{me.record.played}</b> {me.record.played === 1 ? "table" : "tables"}{me.record.best_ms > 0 && <> · fastest <b>{Math.round(me.record.best_ms / 1000)}s</b></>}
             </div>
           )}
           <TradePanel view={view} token={token} live={live || final} onToast={onToast} refreshKey={tick} />

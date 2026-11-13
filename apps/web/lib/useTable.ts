@@ -42,10 +42,28 @@ export function useTable(key: string) {
         }
         if (v.chat.length) addChat(v.chat);
         if (v.phase === "revealed" || v.phase === "voided" || v.phase === "failed") {
-          // One more pass is enough to pick up the last events; then stop polling.
+          // The table is settled. Fetch the whole chat once more: whether each claim was true is only told now, and
+          // the incremental polls never re-send lines the browser already has. Then stop polling.
           if (stopped.current) return;
           stopped.current = true;
-          timer = setTimeout(tick, 1500);
+          timer = setTimeout(async () => {
+            try {
+              const f = await getTable(key, counts.current.feed, 0);
+              setView(f);
+              setChat(f.chat);
+              counts.current.chat = f.chat.length;
+              if (f.feed.length) {
+                setFeed((cur) => {
+                  const next = [...cur];
+                  for (const e of f.feed) if (e.idx === next.length) next.push(e);
+                  counts.current.feed = next.length;
+                  return next;
+                });
+              }
+            } catch {
+              /* the settled view is already on screen */
+            }
+          }, 1500);
           return;
         }
       } catch (e) {

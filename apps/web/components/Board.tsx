@@ -89,7 +89,10 @@ export function Board({ view, selected, onSelect, final, focus }: { view: TableV
         {/* wallet rows: string from the payer, then buy / sell marks */}
         {L.rows.map((r, i) => {
           const isSelected = selected === r.wallet;
-          const kolColor = r.funderIsKol ? view.seats[r.funderLane].color : "#58b6c9";
+          // A wallet paid by another wallet (the relay) takes the colour of whoever paid that wallet; the exchange is blue.
+          const upstream = r.funderRow !== null ? L.rows[r.funderRow] : null;
+          const ownedByCaller = r.funderIsKol || (upstream?.funderIsKol ?? false);
+          const kolColor = r.funderIsKol ? view.seats[r.funderLane].color : upstream?.funderIsKol ? view.seats[upstream.funderLane].color : "#58b6c9";
           const revealedSide = final && sideSet.has(r.wallet);
           const lab = entryLabel(view, r.dossier.funder).text;
           return (
@@ -98,7 +101,7 @@ export function Board({ view, selected, onSelect, final, focus }: { view: TableV
               {/* span line */}
               {r.spanX && <line x1={r.spanX[0]} x2={r.spanX[1]} y1={r.y} y2={r.y} stroke={kolColor} strokeOpacity={0.35} strokeWidth="1" />}
               {/* the string */}
-              <path className={`string ${r.funderIsKol ? "" : "ex"}`} d={r.stringPath} style={{ animationDelay: `${Math.min(i, 6) * 60}ms` }} />
+              <path className={`string ${ownedByCaller ? "" : "ex"}`} d={r.stringPath} style={{ animationDelay: `${Math.min(i, 6) * 60}ms` }} />
               <circle className="wallet-dot" cx={r.fundedX} cy={r.y} r={6} stroke={isSelected ? "#f2c230" : kolColor} />
               <text className="axis" x={14} y={r.y + 4} fill={revealedSide ? "#e5402a" : undefined} style={revealedSide ? { fill: "#e5402a" } : undefined}>
                 {r.wallet.slice(0, 4)}…{r.wallet.slice(-3)}
