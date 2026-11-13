@@ -1,0 +1,3 @@
+# near-sdk compiles its on-chain host calls only under `--cfg near` (cargo-near normally sets this).
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", "near", "-C", "link-arg=-s"]
