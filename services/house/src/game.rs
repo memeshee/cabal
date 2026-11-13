@@ -850,8 +850,8 @@ impl Game {
 
     pub async fn player_buy(&self, t: &Table, who: &AccountId, m: u64) -> ActionResult {
         let round = match self.playing(t) { Ok(r) => r, Err(e) => return e };
-        if !(5..=300).contains(&m) {
-            return ActionResult::fail("Pick between 0.005 and 0.3 NEAR.");
+        if !(5..=100).contains(&m) {
+            return ActionResult::fail("Pick between 0.005 and 0.1 NEAR.");
         }
         match self.chain.call(who, "buy", json!({ "round": round, "min_chips": 1 }), mnear(m), GAS_TX).await {
             Ok(o) => {

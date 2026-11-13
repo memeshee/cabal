@@ -12,6 +12,12 @@ primary_region = "iad"
   CABAL_CONTRACT = "cabal-game-bfbf.testnet"
   HOUSE_ACCOUNT = "cabal-house-bfbf.testnet"
   SLOTS = "3"
+  # Spending limits sized to the house balance: a guest keeps its grant, tables are mostly recycled.
+  GUEST_GRANT_MNEAR = "200"
+  MAX_GUESTS_PER_DAY = "90"
+  MAX_GUESTS_PER_IP_HOUR = "3"
+  MAX_TABLES_PER_DAY = "120"
+  MAX_TABLES_PER_IP_HOUR = "6"
   DATA_DIR = "/data"
 
 [[vm]]

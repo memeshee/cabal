@@ -40,13 +40,13 @@ These are exact steps with the expected result.
 1. Open https://cabal-near.fly.dev and click **Play the demo table**.
    *Expected:* after about 15 to 40 seconds ("Dealing the table") a table opens with a countdown from 03:00.
 2. Watch the **Board**. Three things happen to `@mira` in order (times are seconds after the table opens, give or take a second of chain latency):
-   - at about **34s to 39s** she pays for three fresh wallets (red strings starting on her lane);
-   - at about **49s to 53s** those three wallets each buy (green squares);
-   - at about **65s** she posts her call (a pin on her lane); at about **72s to 78s** the three wallets sell (orange diamonds).
+   - at about **34s to 41s** she pays for three fresh wallets (red strings starting on her lane);
+   - at about **50s to 57s** those three wallets each buy (green squares);
+   - at about **65s to 69s** she posts her call (a pin on her lane); at about **73s to 82s** the three wallets sell (orange diamonds).
 
    *Expected:* three wallet rows whose red string starts on `@mira`'s lane, with green squares to the left of her pin and orange diamonds to the right of it.
 3. Click one of those wallet rows (or a wallet name in **The tape**).
-   *Expected:* a **Wallet file** showing "paid for by @mira", a buy at roughly −15s relative to her call, and a sell at roughly +8s.
+   *Expected:* a **Wallet file** showing "paid for by @mira", a buy about 15s before her call and a sell about 7s after it.
 4. Compare with the two red herrings. The row with a dashed blue string was paid for by the exchange and buys early (ruled out by who paid for it). The row paid for by `@oren` appears later, at about 98s, and only buys at about 130s, after `@oren`'s own call at about 118s (ruled out by timing).
 5. Once the evidence is in (any time after about 80s), press **Expose** next to `@mira` and confirm the stake.
    *Expected:* a toast "You accused @mira" with a link to the transaction.
