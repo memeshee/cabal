@@ -8,7 +8,9 @@ CABAL is a three-minute memecoin party game on NEAR. Four AI influencers hype th
 
 - **Live demo:** https://cabal-near.fly.dev (NEAR testnet, play money, no wallet or sign-up)
 - **Contract:** [`cabal-game-bfbf.testnet`](https://testnet.nearblocks.io/address/cabal-game-bfbf.testnet)
-- **Tracks:** Games With Real Economies (`games`) and Memecoins With Mechanics (`memecoins`)
+- **Tracks:** Games With Real Economies (`games`, primary) and Memecoins With Mechanics (`memecoins`)
+  - *Games:* the game loop is the product. Every NPC (caller, copy-trader, whale) is a real account with its own wallet and its own transactions, and players never see a wallet, a seed phrase or a gas prompt.
+  - *Memecoins:* each table is a memecoin on a bonding curve whose mechanic is the point: the insider's bag is provably burned when they're caught. The coin is deliberately not a transferable token (see "What is real").
 
 ![A live table: the board, the tape, the suspects and the room](docs/screenshots/table-mid.png)
 
@@ -30,6 +32,14 @@ The pattern is readable on-chain. Almost nobody reads it, because it takes a lot
 6. **The reveal.** The house reveals the roles. The contract checks the hash and that each side wallet really was paid for by the cabal's wallet. If you were right, you get your stake back plus a share of the pot (the house bond, the cabal's burned bag, and wrong stakes). If the house stays silent, anyone can void the table and the house bond goes to the accusers.
 
 There are red herrings on purpose: a whale funded by the exchange that buys before everyone (ruled out by the funding link), and a friend wallet paid for by an honest caller that buys *after* that caller's call (ruled out by timing).
+
+### The pattern, drawn
+
+![The cabal pattern: a caller pays for fresh wallets that buy before the call and sell into the crowd after it](docs/diagrams/the-pattern.svg)
+
+### Why you don't have to trust the house
+
+![Commit before play, reveal after, and the contract rejects anything that does not match](docs/diagrams/trust-model.svg)
 
 ## Try it (for judges and reviewers)
 
@@ -72,11 +82,11 @@ This plays a full table against the live testnet, runs a *solver* that sees only
 |---|---|
 | Wallets, trades, calls, funding, accusations, reveal, payouts | **Real NEAR testnet transactions.** Every row on the tape is a contract event. |
 | The cabal commitment and its check | **Real, enforced by the contract** (`reveal` rejects a mismatched preimage, a late reveal, or side wallets the cabal never funded). |
-| The coin and its price | **Real bonding curve in the contract** (`price = K × supply`); the reserve always equals the curve integral, so every holder can sell. |
+| The coin and its price | **Real bonding curve in the contract** (`price = K × supply`); the reserve always equals the curve integral, so every holder can sell. The chips are **balances inside the game contract, not a NEP-141 token**: they cannot be transferred out or listed anywhere. |
 | Money | **Testnet NEAR only.** The contract and server refuse any other network. |
 | The four callers, the copy-traders, the whale and the friend wallet | **Simulated by the house.** They are real accounts making real transactions, but their behavior comes from a seeded script, not from independent players. |
 | The callers' chat lines | **Generated text** (see "Dialogue" below). Chat is off-chain and never affects outcomes. |
-| Guest accounts | **Custodial throwaway testnet accounts held by the server**, derived from a token in your browser. They are not your own keys. Do not reuse them. |
+| Guest accounts | **Custodial throwaway testnet accounts held by the server**, derived from a token in your browser. They are not your own keys. Do not reuse them. Play money is limited per network and per day, so a busy demo can run out: the page then says so. |
 | NEAR Intents | **Not used.** There is no Intents testnet and this game does not need cross-chain settlement. |
 | Multiplayer | **Not implemented.** Several people can sit at different tables at once; a table has one human seat. |
 
@@ -98,7 +108,7 @@ This plays a full table against the live testnet, runs a *solver* that sees only
 ```
 
 - **`contracts/cabal`** (Rust, near-sdk 5.30): the bonding-curve market, the evidence feed, accusations, the commitment/reveal/void logic. 27 unit tests, including swapped-cabal, changed-side-wallet, late-reveal and wrong-funder attacks.
-- **`services/house`** (Rust, Axum, Tokio, `near-api`): the deal is a pure seeded function (`plan.rs`), executed against the chain by `game.rs`. All house wallets and all guest accounts are derived from one master secret, so the service stores no keys and can finish a table after a restart. 26 unit tests.
+- **`services/house`** (Rust, Axum, Tokio, `near-api`): the deal is a pure seeded function (`plan.rs`), executed against the chain by `game.rs`. All house wallets and all guest accounts are derived from one master secret, so the service stores no keys and can finish a table after a restart. 27 unit tests, including a check that the cabal's side wallets profit on the contract's own curve in every deal and can afford the sell after the buy.
 - **`apps/web`** (Next.js 16, React 19, TypeScript): the evidence board is hand-written SVG, laid out by a pure, tested module (`lib/board.ts`). 12 tests.
 
 Key decisions and tradeoffs are written next to the code; the two that matter most:
